@@ -1,0 +1,53 @@
+  0%|          | 0/4878 [00:00<?, ?it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+  warnings.warn(
+ 10%|█         | 500/4878 [02:19<17:35,  4.15it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/peft/utils/save_and_load.py:260: UserWarning: Setting `save_embedding_layers` to `True` as the embedding layer has been resized during finetuning.
+{'loss': 2.3403, 'grad_norm': 0.8823010325431824, 'learning_rate': 4.487494874948749e-05, 'epoch': 0.31}
+  warnings.warn(
+/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+  warnings.warn(
+ 21%|██        | 1000/4878 [04:32<15:19,  4.22it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/peft/utils/save_and_load.py:260: UserWarning: Setting `save_embedding_layers` to `True` as the embedding layer has been resized during finetuning.
+{'loss': 2.2701, 'grad_norm': 0.9342594742774963, 'learning_rate': 3.974989749897499e-05, 'epoch': 0.62}
+  warnings.warn(
+/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+  warnings.warn(
+ 31%|███       | 1500/4878 [06:44<15:36,  3.61it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/peft/utils/save_and_load.py:260: UserWarning: Setting `save_embedding_layers` to `True` as the embedding layer has been resized during finetuning.
+{'loss': 2.2481, 'grad_norm': 0.9709546566009521, 'learning_rate': 3.4624846248462485e-05, 'epoch': 0.92}
+  warnings.warn(
+/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+  warnings.warn(
+ 41%|████      | 2000/4878 [08:57<13:40,  3.51it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/peft/utils/save_and_load.py:260: UserWarning: Setting `save_embedding_layers` to `True` as the embedding layer has been resized during finetuning.
+{'loss': 2.2399, 'grad_norm': 1.2195159196853638, 'learning_rate': 2.9499794997949982e-05, 'epoch': 1.23}
+  warnings.warn(
+/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+  warnings.warn(
+ 51%|█████▏    | 2500/4878 [11:10<09:34,  4.14it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/peft/utils/save_and_load.py:260: UserWarning: Setting `save_embedding_layers` to `True` as the embedding layer has been resized during finetuning.
+{'loss': 2.2265, 'grad_norm': 1.4267723560333252, 'learning_rate': 2.4374743747437475e-05, 'epoch': 1.54}
+  warnings.warn(
+/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+  warnings.warn(
+ 62%|██████▏   | 3000/4878 [13:22<07:53,  3.97it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/peft/utils/save_and_load.py:260: UserWarning: Setting `save_embedding_layers` to `True` as the embedding layer has been resized during finetuning.
+{'loss': 2.2237, 'grad_norm': 1.1823054552078247, 'learning_rate': 1.924969249692497e-05, 'epoch': 1.85}
+  warnings.warn(
+/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+  warnings.warn(
+ 72%|███████▏  | 3500/4878 [15:35<05:40,  4.04it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/peft/utils/save_and_load.py:260: UserWarning: Setting `save_embedding_layers` to `True` as the embedding layer has been resized during finetuning.
+{'loss': 2.225, 'grad_norm': 1.4672942161560059, 'learning_rate': 1.4124641246412465e-05, 'epoch': 2.15}
+  warnings.warn(
+/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+  warnings.warn(
+ 82%|████████▏ | 4000/4878 [17:49<03:26,  4.25it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/peft/utils/save_and_load.py:260: UserWarning: Setting `save_embedding_layers` to `True` as the embedding layer has been resized during finetuning.
+{'loss': 2.2102, 'grad_norm': 1.053428053855896, 'learning_rate': 8.99958999589996e-06, 'epoch': 2.46}
+  warnings.warn(
+/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+  warnings.warn(
+ 92%|█████████▏| 4500/4878 [20:01<01:46,  3.56it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/peft/utils/save_and_load.py:260: UserWarning: Setting `save_embedding_layers` to `True` as the embedding layer has been resized during finetuning.
+{'loss': 2.2152, 'grad_norm': 1.0659127235412598, 'learning_rate': 3.874538745387454e-06, 'epoch': 2.77}
+  warnings.warn(
+/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+  warnings.warn(
+100%|██████████| 4878/4878 [21:41<00:00,  5.21it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/peft/utils/save_and_load.py:260: UserWarning: Setting `save_embedding_layers` to `True` as the embedding layer has been resized during finetuning.
+  warnings.warn(
+100%|██████████| 4878/4878 [21:42<00:00,  3.74it/s]
+{'train_runtime': 1306.8256, 'train_samples_per_second': 119.378, 'train_steps_per_second': 3.733, 'train_loss': 2.242438947826978, 'epoch': 3.0}
+/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/peft/utils/save_and_load.py:260: UserWarning: Setting `save_embedding_layers` to `True` as the embedding layer has been resized during finetuning.
+  warnings.warn(

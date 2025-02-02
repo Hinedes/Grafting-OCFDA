@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from src.layerwrapper import WrappedGPT
-from utils.datasets_loader import get_loaders
+from src.datasets_loader import get_loaders
 
 
 def tensor_mask_of_largest_elements(tensor: torch.tensor, k: int) -> torch.tensor:
@@ -50,20 +50,20 @@ def find_layers(block, layers=[nn.Linear], name=''):
 
 
 @torch.no_grad()
-def prepare_super_mask(args, model, tokenizer, dev, outliers_ratio):
-    dataloader, _ = get_loaders("c4", args.nsamples, seed=args.seed, seqlen=model.seqlen, tokenizer=tokenizer)
+def prepare_super_mask(model, tokenizer, dev, outliers_ratio, nsamples=128, seed=228):
+    dataloader, _ = get_loaders("c4", nsamples, seed=seed, seqlen=model.seqlen, tokenizer=tokenizer)
 
     use_cache = model.config.use_cache
     model.config.use_cache = False
 
     blocks = get_all_blocks(model)
 
-    if "model.embed_tokens" in model.hf_device_map:
-        dev = model.hf_device_map["model.embed_tokens"]
+    #if "model.embed_tokens" in model.hf_device_map:
+    #    dev = model.hf_device_map["model.embed_tokens"]
 
     dtype = next(iter(model.parameters())).dtype
     inps = torch.zeros(
-        (args.nsamples, min(2048, model.seqlen), model.config.hidden_size), dtype=dtype, device=dev
+        (nsamples, min(2048, model.seqlen), model.config.hidden_size), dtype=dtype, device=dev
     )
     cache = {'i': 0, 'attention_mask': None, "position_ids": None, 'position_embeddings': None}
 
@@ -105,15 +105,15 @@ def prepare_super_mask(args, model, tokenizer, dev, outliers_ratio):
 
     for i in range(len(blocks)):
         block = blocks[i]
-        if f"model.layers.{i}" in model.hf_device_map:
-            dev = model.hf_device_map[f"model.layers.{i}"]
-            print(f"layer {i} device {dev}")
-            inps, outs = inps.to(dev), outs.to(dev)
+        #if f"model.layers.{i}" in model.hf_device_map:
+        #    dev = model.hf_device_map[f"model.layers.{i}"]
+        #    print(f"layer {i} device {dev}")
+        #    inps, outs = inps.to(dev), outs.to(dev)
 
-            if attention_mask is not None:
-                attention_mask = attention_mask.to(dev)
-            if position_ids is not None:
-                position_ids = position_ids.to(dev)
+        #    if attention_mask is not None:
+        #        attention_mask = attention_mask.to(dev)
+        #    if position_ids is not None:
+        #        position_ids = position_ids.to(dev)
 
         subset = find_layers(block)
 
@@ -130,7 +130,7 @@ def prepare_super_mask(args, model, tokenizer, dev, outliers_ratio):
         for name in wrappers:
             handles.append(subset[name].register_forward_hook(add_batch(name)))
 
-        for j in range(args.nsamples):
+        for j in range(nsamples):
             outs[j] = block(inps[j].to(dev).unsqueeze(0), **block_args)[0]
 
         for h in handles:
@@ -138,8 +138,13 @@ def prepare_super_mask(args, model, tokenizer, dev, outliers_ratio):
 
         for name in subset:
             W_metric = torch.abs(subset[name].weight.data) * torch.sqrt(wrappers[name].scaler_row.reshape((1, -1)))
-            super_mask = tensor_mask_of_largest_elements(tensor=W_metric, k=int(outliers_ratio*W_metric.numel()))
-            subset[name].super_mask = super_mask
+            #super_mask = tensor_mask_of_largest_elements(tensor=W_metric, k=int(outliers_ratio*W_metric.numel()))
+            #subset[name].super_mask = super_mask
+
+            flat_tensor = W_metric.view(-1)
+            train_num = min(int(outliers_ratio * W_metric.numel()) + 1, W_metric.numel())
+            topk_indices = torch.topk(flat_tensor, k=train_num).indices
+            subset[name].weight.wanda_topk_indices = topk_indices
 
             print(i, name)
 
@@ -150,4 +155,3 @@ def prepare_super_mask(args, model, tokenizer, dev, outliers_ratio):
 
     model.config.use_cache = use_cache
     torch.cuda.empty_cache()
-

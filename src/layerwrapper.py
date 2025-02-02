@@ -12,7 +12,7 @@ class WrappedGPT:
         self.scaler_row = torch.zeros(self.columns, device=self.dev)
         self.nsamples = 0
 
-        self.layer_id = layer_id 
+        self.layer_id = layer_id
         self.layer_name = layer_name
 
     def add_batch(self, inp, out):

@@ -1,0 +1,24 @@
+  0%|          | 0/4878 [00:00<?, ?it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+  warnings.warn(
+ 10%|█         | 500/4878 [01:52<14:15,  5.11it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+{'loss': 2.6653, 'grad_norm': 9.4375, 'learning_rate': 4.487494874948749e-05, 'epoch': 0.31}
+  warnings.warn(
+ 21%|██        | 1000/4878 [03:38<12:35,  5.13it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+{'loss': 2.6649, 'grad_norm': 7.78125, 'learning_rate': 3.974989749897499e-05, 'epoch': 0.62}
+  warnings.warn(
+ 31%|███       | 1500/4878 [05:25<13:04,  4.31it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+{'loss': 2.6672, 'grad_norm': 8.25, 'learning_rate': 3.4624846248462485e-05, 'epoch': 0.92}
+  warnings.warn(
+ 41%|████      | 2000/4878 [07:13<11:53,  4.03it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+{'loss': 2.6695, 'grad_norm': 10.125, 'learning_rate': 2.9499794997949982e-05, 'epoch': 1.23}
+  warnings.warn(
+ 51%|█████▏    | 2500/4878 [09:02<08:12,  4.83it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+{'loss': 2.6647, 'grad_norm': 11.5625, 'learning_rate': 2.4374743747437475e-05, 'epoch': 1.54}
+  warnings.warn(
+ 62%|██████▏   | 3000/4878 [10:49<07:00,  4.47it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+{'loss': 2.6652, 'grad_norm': 11.8125, 'learning_rate': 1.924969249692497e-05, 'epoch': 1.85}
+  warnings.warn(
+ 72%|███████▏  | 3500/4878 [12:38<05:09,  4.46it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+{'loss': 2.6747, 'grad_norm': 12.6875, 'learning_rate': 1.4124641246412465e-05, 'epoch': 2.15}
+  warnings.warn(
+ 73%|███████▎  | 3537/4878 [12:47<04:55,  4.53it/s]

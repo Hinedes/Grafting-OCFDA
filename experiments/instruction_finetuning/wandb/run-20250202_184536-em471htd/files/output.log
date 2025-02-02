@@ -1,0 +1,31 @@
+  0%|          | 0/4878 [00:00<?, ?it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+  warnings.warn(
+ 10%|█         | 500/4878 [02:49<22:36,  3.23it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+{'loss': 2.6653, 'grad_norm': 9.5, 'learning_rate': 4.487494874948749e-05, 'epoch': 0.31}
+  warnings.warn(
+ 21%|██        | 1000/4878 [05:35<25:13,  2.56it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+{'loss': 2.6649, 'grad_norm': 7.84375, 'learning_rate': 3.974989749897499e-05, 'epoch': 0.62}
+  warnings.warn(
+ 31%|███       | 1500/4878 [08:20<19:43,  2.85it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+{'loss': 2.6672, 'grad_norm': 8.3125, 'learning_rate': 3.4624846248462485e-05, 'epoch': 0.92}
+  warnings.warn(
+ 41%|████      | 2000/4878 [11:05<17:18,  2.77it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+{'loss': 2.6695, 'grad_norm': 10.1875, 'learning_rate': 2.9499794997949982e-05, 'epoch': 1.23}
+  warnings.warn(
+ 51%|█████▏    | 2500/4878 [13:52<12:10,  3.26it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+{'loss': 2.6647, 'grad_norm': 11.625, 'learning_rate': 2.4374743747437475e-05, 'epoch': 1.54}
+  warnings.warn(
+ 62%|██████▏   | 3000/4878 [16:37<10:15,  3.05it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+{'loss': 2.6652, 'grad_norm': 11.875, 'learning_rate': 1.924969249692497e-05, 'epoch': 1.85}
+  warnings.warn(
+ 72%|███████▏  | 3500/4878 [19:23<07:28,  3.07it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+{'loss': 2.6747, 'grad_norm': 12.75, 'learning_rate': 1.4124641246412465e-05, 'epoch': 2.15}
+  warnings.warn(
+ 82%|████████▏ | 4000/4878 [22:10<04:27,  3.29it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+{'loss': 2.6588, 'grad_norm': 9.9375, 'learning_rate': 8.99958999589996e-06, 'epoch': 2.46}
+  warnings.warn(
+ 92%|█████████▏| 4500/4878 [24:56<02:22,  2.65it/s]/home/ilini/llm_fine_tuning/super_tuning/venv/lib/python3.12/site-packages/torch/nn/parallel/_functions.py:71: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+{'loss': 2.6628, 'grad_norm': 8.375, 'learning_rate': 3.874538745387454e-06, 'epoch': 2.77}
+  warnings.warn(
+100%|██████████| 4878/4878 [27:04<00:00,  3.00it/s]
+{'train_runtime': 1627.3605, 'train_samples_per_second': 95.864, 'train_steps_per_second': 2.997, 'train_loss': 2.6660228321033212, 'epoch': 3.0}

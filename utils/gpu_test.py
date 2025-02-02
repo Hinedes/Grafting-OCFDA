@@ -1,6 +1,7 @@
 import torch
 import time
 
+
 def measure_batched_operations(matrix_size=1024, batch_size=32, seed=42, epsilon=1e-5):
     results = []
 
