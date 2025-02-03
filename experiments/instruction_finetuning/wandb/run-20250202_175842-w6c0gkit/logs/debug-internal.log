@@ -1,7 +1,0 @@
-{"time":"2025-02-02T17:58:42.720523569+03:00","level":"INFO","msg":"stream: starting","core version":"0.19.4","symlink path":"/home/ilini/llm_fine_tuning/SIFT/exp/instruction_finetuning/wandb/run-20250202_175842-w6c0gkit/logs/debug-core.log"}
-{"time":"2025-02-02T17:58:42.838504214+03:00","level":"INFO","msg":"created new stream","id":"w6c0gkit"}
-{"time":"2025-02-02T17:58:42.83854619+03:00","level":"INFO","msg":"stream: started","id":"w6c0gkit"}
-{"time":"2025-02-02T17:58:42.838642794+03:00","level":"INFO","msg":"writer: Do: started","stream_id":"w6c0gkit"}
-{"time":"2025-02-02T17:58:42.838686353+03:00","level":"INFO","msg":"handler: started","stream_id":"w6c0gkit"}
-{"time":"2025-02-02T17:58:42.838803969+03:00","level":"INFO","msg":"sender: started","stream_id":"w6c0gkit"}
-{"time":"2025-02-02T17:58:43.882940197+03:00","level":"INFO","msg":"Starting system monitor"}

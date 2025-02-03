@@ -1,7 +1,0 @@
-{"time":"2025-02-02T19:15:28.887681963+03:00","level":"INFO","msg":"stream: starting","core version":"0.19.4","symlink path":"/home/ilini/llm_fine_tuning/SIFT/exp/instruction_finetuning/wandb/run-20250202_191528-ep68w24v/logs/debug-core.log"}
-{"time":"2025-02-02T19:15:29.008022607+03:00","level":"INFO","msg":"created new stream","id":"ep68w24v"}
-{"time":"2025-02-02T19:15:29.008083913+03:00","level":"INFO","msg":"stream: started","id":"ep68w24v"}
-{"time":"2025-02-02T19:15:29.008113157+03:00","level":"INFO","msg":"handler: started","stream_id":"ep68w24v"}
-{"time":"2025-02-02T19:15:29.008191441+03:00","level":"INFO","msg":"sender: started","stream_id":"ep68w24v"}
-{"time":"2025-02-02T19:15:29.008211597+03:00","level":"INFO","msg":"writer: Do: started","stream_id":"ep68w24v"}
-{"time":"2025-02-02T19:15:30.063306826+03:00","level":"INFO","msg":"Starting system monitor"}
