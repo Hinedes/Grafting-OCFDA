@@ -4,7 +4,7 @@ Official PyTorch implementation of **SuperTuning**
 ---
 
 ## Setup
-To be written...
+IMPORTANT: SIFT code doesn't work with torch>2.1.2 versions (they changed how slicing with 2d indices works).
 
 ## Usage
 To be written...
