@@ -61,6 +61,7 @@ class Super:
                 sparse_idx = param.wanda_topk_indices
 
                 sparse_param.idx = torch.stack(torch.unravel_index(sparse_idx, param.shape))
+                print(sparse_param.idx.device)
                 ## help the initial parameter to find the sparse parameter
                 self.sparse_mapping[name] = sparse_param
                 self.grad_acc_count[name] = 0
@@ -124,7 +125,7 @@ class Super:
             with torch.no_grad():
                 for name, param in self.named_trainable_parameters():
                     if not (name in self.sparse_mapping.keys()) or param.grad is None:
-                        return
+                        continue
 
                     # print(name)
                     sparse_param = self.sparse_mapping[name]

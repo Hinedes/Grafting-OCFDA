@@ -87,7 +87,7 @@ def prepare_super_mask(model, tokenizer, dev, outliers_ratio, nsamples=128, seed
     # But I'm not 100% sure that everything is correct. Check pls.
     dev = model.device
 
-    
+
     blocks[0] = Catcher(blocks[0])
     for batch in dataloader:
         try:
@@ -150,7 +150,7 @@ def prepare_super_mask(model, tokenizer, dev, outliers_ratio, nsamples=128, seed
             flat_tensor = W_metric.view(-1)
             train_num = min(int(outliers_ratio * W_metric.numel()) + 1, W_metric.numel())
             topk_indices = torch.topk(flat_tensor, k=train_num).indices
-            subset[name].weight.wanda_topk_indices = topk_indices
+            subset[name].weight.wanda_topk_indices = topk_indices.cpu()
 
             print(i, name)
 
