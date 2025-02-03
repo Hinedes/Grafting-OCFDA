@@ -82,6 +82,12 @@ def prepare_super_mask(model, tokenizer, dev, outliers_ratio, nsamples=128, seed
                 cache['position_ids'] = kwargs['position_ids']
             raise ValueError
 
+    # WARNING: the code was failing at this point (model on cuda, batch on cpu)
+    # I changed device from cpu to model.device and it stopped failing.
+    # But I'm not 100% sure that everything is correct. Check pls.
+    dev = model.device
+
+    
     blocks[0] = Catcher(blocks[0])
     for batch in dataloader:
         try:
