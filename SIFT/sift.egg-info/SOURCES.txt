@@ -1,0 +1,8 @@
+README.md
+setup.py
+sift/__init__.py
+sift/sift.py
+sift.egg-info/PKG-INFO
+sift.egg-info/SOURCES.txt
+sift.egg-info/dependency_links.txt
+sift.egg-info/top_level.txt

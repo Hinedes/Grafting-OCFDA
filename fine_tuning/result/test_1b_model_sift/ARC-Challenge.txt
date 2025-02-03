@@ -1,0 +1,64 @@
+./trained_models/llama-sift
+['Answer1: Planetary density will decrease. Answer2: Planetary years will become longer. Answer3: Planetary days will become shorter. Answer4:']
+Please choose the correct answer to the question: An astronomer observes that a planet rotates faster after a meteorite impact. Which is the most likely effect of this increase in rotation?
+
+Answer1: Planetary density will decrease. Answer2: Planetary years will become longer. Answer3: Planetary days will become shorter. Answer4: Planetary gravity will become stronger.
+
+Answer format: answer1/answer2/answer3/answer4
+Answer1: Planetary density will decrease. Answer2: Planetary years will become longer. Answer3: Planetary days will become shorter. Answer4:
+prediction: 
+label: answer3
+---------------
+test:1/1172 | accuracy 0  0.0
+---------------
+['Answer1: buildings will be built faster Answer2: buildings will be made safer Answer3: building designs will look nicer Answer4: building materials will be cheaper']
+Please choose the correct answer to the question: A group of engineers wanted to know how different building designs would respond during an earthquake. They made several models of buildings and tested each for its ability to withstand earthquake conditions. Which will most likely result from testing different building designs?
+
+Answer1: buildings will be built faster Answer2: buildings will be made safer Answer3: building designs will look nicer Answer4: building materials will be cheaper
+
+Answer format: answer1/answer2/answer3/answer4
+Answer1: buildings will be built faster Answer2: buildings will be made safer Answer3: building designs will look nicer Answer4: building materials will be cheaper
+prediction: 
+label: answer2
+---------------
+test:2/1172 | accuracy 0  0.0
+---------------
+['Answer1: Chemical energy is absorbed through the roots. Answer2: Light energy is converted to chemical energy. Answer3: Chlorophyll in the leaf captures']
+Please choose the correct answer to the question: The end result in the process of photosynthesis is the production of sugar and oxygen. Which step signals the beginning of photosynthesis?
+
+Answer1: Chemical energy is absorbed through the roots. Answer2: Light energy is converted to chemical energy. Answer3: Chlorophyll in the leaf captures light energy. Answer4: Sunlight is converted into chlorophyll.
+
+Answer format: answer1/answer2/answer3/answer4
+Answer1: Chemical energy is absorbed through the roots. Answer2: Light energy is converted to chemical energy. Answer3: Chlorophyll in the leaf captures
+prediction: 
+label: answer3
+---------------
+test:3/1172 | accuracy 0  0.0
+---------------
+['Answer1: the control Answer2: the hypothesis statement Answer3: the dependent (responding) variable Answer4: the independent (manipulated) variable']
+Please choose the correct answer to the question: A physicist wants to determine the speed a car must reach to jump over a ramp. The physicist conducts three trials. In trials two and three, the speed of the car is increased by 20 miles per hour. What is the physicist investigating when he changes the speed?
+
+Answer1: the control Answer2: the hypothesis statement Answer3: the dependent (responding) variable Answer4: the independent (manipulated) variable
+
+Answer format: answer1/answer2/answer3/answer4
+Answer1: the control Answer2: the hypothesis statement Answer3: the dependent (responding) variable Answer4: the independent (manipulated) variable
+prediction: 
+label: answer4
+---------------
+test:4/1172 | accuracy 0  0.0
+---------------
+['Answer1: They have each lost kinetic energy. Answer2: They have each gained the same amount of potential energy. Answer3: They have each lost the']
+Please choose the correct answer to the question: An astronaut drops a 1.0 kg object and a 5.0 kg object on the Moon. Both objects fall a total distance of 2.0 m vertically. Which of the following best describes the objects after they have fallen a distance of 1.0 m?
+
+Answer1: They have each lost kinetic energy. Answer2: They have each gained the same amount of potential energy. Answer3: They have each lost the same amount of potential energy. Answer4: They have each gained one-half of their maximum kinetic energy.
+
+Answer format: answer1/answer2/answer3/answer4
+Answer1: They have each lost kinetic energy. Answer2: They have each gained the same amount of potential energy. Answer3: They have each lost the
+prediction: 
+label: answer4
+---------------
+test:5/1172 | accuracy 0  0.0
+---------------
+
+
+test finished

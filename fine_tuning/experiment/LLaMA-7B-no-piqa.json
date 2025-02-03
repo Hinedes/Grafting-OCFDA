@@ -1,0 +1,47 @@
+[
+    {
+        "instruction": "Please choose the correct solution to the question: How do I ready a guinea pig cage for it's new occupants?\n\nSolution1: Provide the guinea pig with a cage full of a few inches of bedding made of ripped paper strips, you will also need to supply it with a water bottle and a food dish.\n\nSolution2: Provide the guinea pig with a cage full of a few inches of bedding made of ripped jeans material, you will also need to supply it with a water bottle and a food dish.\n\nAnswer format: solution1/solution2",
+        "input": "",
+        "output": "the correct answer is solution1",
+        "answer": "solution1",
+        "output_pred": "Please choose the correct solution to the question: How do I ready a guinea pig cage for it's new occupants?\n\nSolution1: Provide the guinea pig",
+        "pred": "",
+        "flag": false
+    },
+    {
+        "instruction": "Please choose the correct solution to the question: dresser\n\nSolution1: replace drawer with bobby pin \n\nSolution2: finish, woodgrain with  bobby pin \n\nAnswer format: solution1/solution2",
+        "input": "",
+        "output": "the correct answer is solution2",
+        "answer": "solution2",
+        "output_pred": "Please choose the correct solution to the question: dresser\n\nSolution1: replace drawer with bobby pin\n\nSolution2: finish, woodgrain with  b",
+        "pred": "",
+        "flag": false
+    },
+    {
+        "instruction": "Please choose the correct solution to the question: To fight Ivan Drago in Rocky for sega master system.\n\nSolution1: Drago isn't in this game because it was released before Rocky IV.\n\nSolution2: You have to defeat Apollo Creed and Clubber Lang first.\n\nAnswer format: solution1/solution2",
+        "input": "",
+        "output": "the correct answer is solution2",
+        "answer": "solution2",
+        "output_pred": "To fight Ivan Drago in Rocky for sega master system.\n\n                ### Instruction:\n                Please choose the correct solution to the question: To fight Ivan Drago",
+        "pred": "",
+        "flag": false
+    },
+    {
+        "instruction": "Please choose the correct solution to the question: Make outdoor pillow.\n\nSolution1: Blow into tin can and tie with rubber band.\n\nSolution2: Blow into trash bag and tie with rubber band.\n\nAnswer format: solution1/solution2",
+        "input": "",
+        "output": "the correct answer is solution2",
+        "answer": "solution2",
+        "output_pred": "Please choose the correct solution to the question: Make outdoor pillow.\n\nSolution1: Blow into tin can and tie with rubber band.\n\nSolution2: Blow into trash",
+        "pred": "",
+        "flag": false
+    },
+    {
+        "instruction": "Please choose the correct solution to the question: ice box\n\nSolution1: will turn into a cooler if you add water to it\n\nSolution2: will turn into a cooler if you add soda to it\n\nAnswer format: solution1/solution2",
+        "input": "",
+        "output": "the correct answer is solution1",
+        "answer": "solution1",
+        "output_pred": "ice box will turn into a cooler if you add water to it",
+        "pred": "",
+        "flag": false
+    }
+]

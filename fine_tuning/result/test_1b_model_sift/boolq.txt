@@ -1,0 +1,75 @@
+./trained_models/llama-sift
+['true\n\n                ### Instruction:\n                Please answer the following question with true or false, question: does ethanol take more energy make that produces?\n\nAnswer format: true']
+Please answer the following question with true or false, question: does ethanol take more energy make that produces?
+
+Answer format: true/false
+true
+
+                ### Instruction:
+                Please answer the following question with true or false, question: does ethanol take more energy make that produces?
+
+Answer format: true
+prediction: true
+label: false
+---------------
+test:1/3270 | accuracy 0  0.0
+---------------
+['true\n\n                ### Instruction:\n                Please answer the following question with true or false, question: is house tax and property tax are same?\n\nAnswer format: true']
+Please answer the following question with true or false, question: is house tax and property tax are same?
+
+Answer format: true/false
+true
+
+                ### Instruction:
+                Please answer the following question with true or false, question: is house tax and property tax are same?
+
+Answer format: true
+prediction: true
+label: true
+---------------
+test:2/3270 | accuracy 1  0.5
+---------------
+['true\n\n                ### Instruction:\n                Please answer the following question with true or false, question: is pain experienced in a missing body part or paralyzed area?\n\nAnswer']
+Please answer the following question with true or false, question: is pain experienced in a missing body part or paralyzed area?
+
+Answer format: true/false
+true
+
+                ### Instruction:
+                Please answer the following question with true or false, question: is pain experienced in a missing body part or paralyzed area?
+
+Answer
+prediction: true
+label: true
+---------------
+test:3/3270 | accuracy 2  0.6666666666666666
+---------------
+['true\n\n                ### Instruction:\n                Please answer the following question with true or false, question: is harry potter and the escape from gringotts a']
+Please answer the following question with true or false, question: is harry potter and the escape from gringotts a roller coaster ride?
+
+Answer format: true/false
+true
+
+                ### Instruction:
+                Please answer the following question with true or false, question: is harry potter and the escape from gringotts a
+prediction: true
+label: true
+---------------
+test:4/3270 | accuracy 3  0.75
+---------------
+['true\n\n                ### Instruction:\n                Please answer the following question with true or false, question: is there a difference between hydroxyzine hcl and hydroxyz']
+Please answer the following question with true or false, question: is there a difference between hydroxyzine hcl and hydroxyzine pam?
+
+Answer format: true/false
+true
+
+                ### Instruction:
+                Please answer the following question with true or false, question: is there a difference between hydroxyzine hcl and hydroxyz
+prediction: true
+label: true
+---------------
+test:5/3270 | accuracy 4  0.8
+---------------
+
+
+test finished

@@ -1,0 +1,47 @@
+[
+    {
+        "instruction": "Please choose the correct answer to the question: An astronomer observes that a planet rotates faster after a meteorite impact. Which is the most likely effect of this increase in rotation?\n\nAnswer1: Planetary density will decrease. Answer2: Planetary years will become longer. Answer3: Planetary days will become shorter. Answer4: Planetary gravity will become stronger.\n\nAnswer format: answer1/answer2/answer3/answer4",
+        "input": "",
+        "output": "the correct answer is answer3",
+        "answer": "answer3",
+        "output_pred": "Answer1: Planetary density will decrease. Answer2: Planetary years will become longer. Answer3: Planetary days will become shorter. Answer4:",
+        "pred": "",
+        "flag": false
+    },
+    {
+        "instruction": "Please choose the correct answer to the question: A group of engineers wanted to know how different building designs would respond during an earthquake. They made several models of buildings and tested each for its ability to withstand earthquake conditions. Which will most likely result from testing different building designs?\n\nAnswer1: buildings will be built faster Answer2: buildings will be made safer Answer3: building designs will look nicer Answer4: building materials will be cheaper\n\nAnswer format: answer1/answer2/answer3/answer4",
+        "input": "",
+        "output": "the correct answer is answer2",
+        "answer": "answer2",
+        "output_pred": "Answer1: buildings will be built faster Answer2: buildings will be made safer Answer3: building designs will look nicer Answer4: building materials will be cheaper",
+        "pred": "",
+        "flag": false
+    },
+    {
+        "instruction": "Please choose the correct answer to the question: The end result in the process of photosynthesis is the production of sugar and oxygen. Which step signals the beginning of photosynthesis?\n\nAnswer1: Chemical energy is absorbed through the roots. Answer2: Light energy is converted to chemical energy. Answer3: Chlorophyll in the leaf captures light energy. Answer4: Sunlight is converted into chlorophyll.\n\nAnswer format: answer1/answer2/answer3/answer4",
+        "input": "",
+        "output": "the correct answer is answer3",
+        "answer": "answer3",
+        "output_pred": "Answer1: Chemical energy is absorbed through the roots. Answer2: Light energy is converted to chemical energy. Answer3: Chlorophyll in the leaf captures",
+        "pred": "",
+        "flag": false
+    },
+    {
+        "instruction": "Please choose the correct answer to the question: A physicist wants to determine the speed a car must reach to jump over a ramp. The physicist conducts three trials. In trials two and three, the speed of the car is increased by 20 miles per hour. What is the physicist investigating when he changes the speed?\n\nAnswer1: the control Answer2: the hypothesis statement Answer3: the dependent (responding) variable Answer4: the independent (manipulated) variable\n\nAnswer format: answer1/answer2/answer3/answer4",
+        "input": "",
+        "output": "the correct answer is answer4",
+        "answer": "answer4",
+        "output_pred": "Answer1: the control Answer2: the hypothesis statement Answer3: the dependent (responding) variable Answer4: the independent (manipulated) variable",
+        "pred": "",
+        "flag": false
+    },
+    {
+        "instruction": "Please choose the correct answer to the question: An astronaut drops a 1.0 kg object and a 5.0 kg object on the Moon. Both objects fall a total distance of 2.0 m vertically. Which of the following best describes the objects after they have fallen a distance of 1.0 m?\n\nAnswer1: They have each lost kinetic energy. Answer2: They have each gained the same amount of potential energy. Answer3: They have each lost the same amount of potential energy. Answer4: They have each gained one-half of their maximum kinetic energy.\n\nAnswer format: answer1/answer2/answer3/answer4",
+        "input": "",
+        "output": "the correct answer is answer4",
+        "answer": "answer4",
+        "output_pred": "Answer1: They have each lost kinetic energy. Answer2: They have each gained the same amount of potential energy. Answer3: They have each lost the",
+        "pred": "",
+        "flag": false
+    }
+]

@@ -1,0 +1,87 @@
+./trained_models/llama-sift
+["Please choose the correct solution to the question: How do I ready a guinea pig cage for it's new occupants?\n\nSolution1: Provide the guinea pig"]
+Please choose the correct solution to the question: How do I ready a guinea pig cage for it's new occupants?
+
+Solution1: Provide the guinea pig with a cage full of a few inches of bedding made of ripped paper strips, you will also need to supply it with a water bottle and a food dish.
+
+Solution2: Provide the guinea pig with a cage full of a few inches of bedding made of ripped jeans material, you will also need to supply it with a water bottle and a food dish.
+
+Answer format: solution1/solution2
+Please choose the correct solution to the question: How do I ready a guinea pig cage for it's new occupants?
+
+Solution1: Provide the guinea pig
+prediction: 
+label: solution1
+---------------
+test:1/1838 | accuracy 0  0.0
+---------------
+['Please choose the correct solution to the question: dresser\n\nSolution1: replace drawer with bobby pin\n\nSolution2: finish, woodgrain with  b']
+Please choose the correct solution to the question: dresser
+
+Solution1: replace drawer with bobby pin 
+
+Solution2: finish, woodgrain with  bobby pin 
+
+Answer format: solution1/solution2
+Please choose the correct solution to the question: dresser
+
+Solution1: replace drawer with bobby pin
+
+Solution2: finish, woodgrain with  b
+prediction: 
+label: solution2
+---------------
+test:2/1838 | accuracy 0  0.0
+---------------
+['To fight Ivan Drago in Rocky for sega master system.\n\n                ### Instruction:\n                Please choose the correct solution to the question: To fight Ivan Drago']
+Please choose the correct solution to the question: To fight Ivan Drago in Rocky for sega master system.
+
+Solution1: Drago isn't in this game because it was released before Rocky IV.
+
+Solution2: You have to defeat Apollo Creed and Clubber Lang first.
+
+Answer format: solution1/solution2
+To fight Ivan Drago in Rocky for sega master system.
+
+                ### Instruction:
+                Please choose the correct solution to the question: To fight Ivan Drago
+prediction: 
+label: solution2
+---------------
+test:3/1838 | accuracy 0  0.0
+---------------
+['Please choose the correct solution to the question: Make outdoor pillow.\n\nSolution1: Blow into tin can and tie with rubber band.\n\nSolution2: Blow into trash']
+Please choose the correct solution to the question: Make outdoor pillow.
+
+Solution1: Blow into tin can and tie with rubber band.
+
+Solution2: Blow into trash bag and tie with rubber band.
+
+Answer format: solution1/solution2
+Please choose the correct solution to the question: Make outdoor pillow.
+
+Solution1: Blow into tin can and tie with rubber band.
+
+Solution2: Blow into trash
+prediction: 
+label: solution2
+---------------
+test:4/1838 | accuracy 0  0.0
+---------------
+['ice box will turn into a cooler if you add water to it']
+Please choose the correct solution to the question: ice box
+
+Solution1: will turn into a cooler if you add water to it
+
+Solution2: will turn into a cooler if you add soda to it
+
+Answer format: solution1/solution2
+ice box will turn into a cooler if you add water to it
+prediction: 
+label: solution1
+---------------
+test:5/1838 | accuracy 0  0.0
+---------------
+
+
+test finished

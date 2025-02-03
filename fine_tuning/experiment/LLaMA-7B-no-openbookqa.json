@@ -1,0 +1,47 @@
+[
+    {
+        "instruction": "Please choose the correct answer to the question: A person wants to start saving money so that they can afford a nice vacation at the end of the year. After looking over their budget and expenses, they decide the best way to save money is to\n\nAnswer1: make more phone calls Answer2: quit eating lunch out Answer3: buy less with monopoly money Answer4: have lunch with friends\n\nAnswer format: answer1/answer2/answer3/answer4",
+        "input": "",
+        "output": "the correct answer is answer2",
+        "answer": "answer2",
+        "output_pred": "Answer1: make more phone calls\n                 Answer2: quit eating lunch out\n                 Answer3: buy less with monopoly money\n                 Answer4: have",
+        "pred": "",
+        "flag": false
+    },
+    {
+        "instruction": "Please choose the correct answer to the question: There is most likely going to be fog around:\n\nAnswer1: a marsh Answer2: a tundra Answer3: the plains Answer4: a desert\n\nAnswer format: answer1/answer2/answer3/answer4",
+        "input": "",
+        "output": "the correct answer is answer1",
+        "answer": "answer1",
+        "output_pred": "Answer1: a marsh Answer2: a tundra Answer3: the plains Answer4: a desert\n\nAnswer format: answer1/answer2/answer",
+        "pred": "answer1",
+        "flag": true
+    },
+    {
+        "instruction": "Please choose the correct answer to the question: Predators eat\n\nAnswer1: lions Answer2: humans Answer3: bunnies Answer4: grass\n\nAnswer format: answer1/answer2/answer3/answer4",
+        "input": "",
+        "output": "the correct answer is answer3",
+        "answer": "answer3",
+        "output_pred": "Answer1/Answer2/Answer3/Answer4\n                 Answer1/Answer2/Answer3/Answer4\n                 Answer1/Answer2/",
+        "pred": "",
+        "flag": false
+    },
+    {
+        "instruction": "Please choose the correct answer to the question: Oak tree seeds are planted and a sidewalk is paved right next to that spot, until eventually, the tree is tall and the roots must extend past the sidewalk, which means\n\nAnswer1: roots may be split Answer2: roots may begin to die Answer3: parts may break the concrete Answer4: roots may fall apart\n\nAnswer format: answer1/answer2/answer3/answer4",
+        "input": "",
+        "output": "the correct answer is answer3",
+        "answer": "answer3",
+        "output_pred": "Answer1: roots may be split\n                 Answer2: roots may begin to die\n                 Answer3: parts may break the concrete\n                 Answer4:",
+        "pred": "",
+        "flag": false
+    },
+    {
+        "instruction": "Please choose the correct answer to the question: An electric car runs on electricity via\n\nAnswer1: gasoline Answer2: a power station Answer3: electrical conductors Answer4: fuel\n\nAnswer format: answer1/answer2/answer3/answer4",
+        "input": "",
+        "output": "the correct answer is answer3",
+        "answer": "answer3",
+        "output_pred": "Answer1: gasoline Answer2: a power station Answer3: electrical conductors Answer4: fuel\n\nAnswer format: answer1/answer2/answer3",
+        "pred": "answer1",
+        "flag": false
+    }
+]

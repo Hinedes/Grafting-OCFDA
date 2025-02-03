@@ -1,0 +1,64 @@
+./trained_models/llama-sift
+['Roof shingle removal: A man is sitting on a roof. he is using wrap to wrap a pair of skis.']
+Please choose the correct ending to complete the given sentence: Roof shingle removal: A man is sitting on a roof. he
+
+Ending1: is using wrap to wrap a pair of skis. Ending2: is ripping level tiles off. Ending3: is holding a rubik's cube. Ending4: starts pulling up roofing on a roof.
+
+Answer format: ending1/ending2/ending3/ending4
+Roof shingle removal: A man is sitting on a roof. he is using wrap to wrap a pair of skis.
+prediction: 
+label: ending4
+---------------
+test:1/10042 | accuracy 0  0.0
+---------------
+['Clean and jerk: A lady walks to a barbell. She bends down and grabs the pole. the lady swings and lands in her arms.']
+Please choose the correct ending to complete the given sentence: Clean and jerk: A lady walks to a barbell. She bends down and grabs the pole. the lady
+
+Ending1: swings and lands in her arms. Ending2: pulls the barbell forward. Ending3: pulls a rope attached to the barbell. Ending4: stands and lifts the weight over her head.
+
+Answer format: ending1/ending2/ending3/ending4
+Clean and jerk: A lady walks to a barbell. She bends down and grabs the pole. the lady swings and lands in her arms.
+prediction: 
+label: ending4
+---------------
+test:2/10042 | accuracy 0  0.0
+---------------
+['Canoeing: Two women in a child are shown in a canoe while a man pulls the canoe while standing in the water, with other individuals visible in the']
+Please choose the correct ending to complete the given sentence: Canoeing: Two women in a child are shown in a canoe while a man pulls the canoe while standing in the water, with other individuals visible in the background. the child and a different man
+
+Ending1: are then shown paddling down a river in a boat while a woman talks. Ending2: are driving the canoe, they go down the river flowing side to side. Ending3: sit in a canoe while the man paddles. Ending4: walking go down the rapids, while the man in his helicopter almost falls and goes out of canoehood.
+
+Answer format: ending1/ending2/ending3/ending4
+Canoeing: Two women in a child are shown in a canoe while a man pulls the canoe while standing in the water, with other individuals visible in the
+prediction: 
+label: ending3
+---------------
+test:3/10042 | accuracy 0  0.0
+---------------
+['Ending1: runs into a car. Ending2: gets in a mat. Ending3: lifts his body above the height of a pole. Ending4:']
+Please choose the correct ending to complete the given sentence: High jump: A boy is running down a track. the boy
+
+Ending1: runs into a car. Ending2: gets in a mat. Ending3: lifts his body above the height of a pole. Ending4: stands on his hands and springs.
+
+Answer format: ending1/ending2/ending3/ending4
+Ending1: runs into a car. Ending2: gets in a mat. Ending3: lifts his body above the height of a pole. Ending4:
+prediction: 
+label: ending3
+---------------
+test:4/10042 | accuracy 0  0.0
+---------------
+['Answer format: ending1/ending2/ending3/ending4']
+Please choose the correct ending to complete the given sentence: High jump: The boy lifts his body above the height of a pole. The boy lands on his back on to a red mat. the boy
+
+Ending1: turns his body around on the mat. Ending2: gets up from the mat. Ending3: continues to lift his body over the pole. Ending4: wiggles out of the mat.
+
+Answer format: ending1/ending2/ending3/ending4
+Answer format: ending1/ending2/ending3/ending4
+prediction: ending1
+label: ending2
+---------------
+test:5/10042 | accuracy 0  0.0
+---------------
+
+
+test finished

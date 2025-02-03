@@ -1,0 +1,47 @@
+[
+    {
+        "instruction": "Please choose the correct ending to complete the given sentence: Roof shingle removal: A man is sitting on a roof. he\n\nEnding1: is using wrap to wrap a pair of skis. Ending2: is ripping level tiles off. Ending3: is holding a rubik's cube. Ending4: starts pulling up roofing on a roof.\n\nAnswer format: ending1/ending2/ending3/ending4",
+        "input": "",
+        "output": "the correct answer is ending4",
+        "answer": "ending4",
+        "output_pred": "Roof shingle removal: A man is sitting on a roof. he is using wrap to wrap a pair of skis.",
+        "pred": "",
+        "flag": false
+    },
+    {
+        "instruction": "Please choose the correct ending to complete the given sentence: Clean and jerk: A lady walks to a barbell. She bends down and grabs the pole. the lady\n\nEnding1: swings and lands in her arms. Ending2: pulls the barbell forward. Ending3: pulls a rope attached to the barbell. Ending4: stands and lifts the weight over her head.\n\nAnswer format: ending1/ending2/ending3/ending4",
+        "input": "",
+        "output": "the correct answer is ending4",
+        "answer": "ending4",
+        "output_pred": "Clean and jerk: A lady walks to a barbell. She bends down and grabs the pole. the lady swings and lands in her arms.",
+        "pred": "",
+        "flag": false
+    },
+    {
+        "instruction": "Please choose the correct ending to complete the given sentence: Canoeing: Two women in a child are shown in a canoe while a man pulls the canoe while standing in the water, with other individuals visible in the background. the child and a different man\n\nEnding1: are then shown paddling down a river in a boat while a woman talks. Ending2: are driving the canoe, they go down the river flowing side to side. Ending3: sit in a canoe while the man paddles. Ending4: walking go down the rapids, while the man in his helicopter almost falls and goes out of canoehood.\n\nAnswer format: ending1/ending2/ending3/ending4",
+        "input": "",
+        "output": "the correct answer is ending3",
+        "answer": "ending3",
+        "output_pred": "Canoeing: Two women in a child are shown in a canoe while a man pulls the canoe while standing in the water, with other individuals visible in the",
+        "pred": "",
+        "flag": false
+    },
+    {
+        "instruction": "Please choose the correct ending to complete the given sentence: High jump: A boy is running down a track. the boy\n\nEnding1: runs into a car. Ending2: gets in a mat. Ending3: lifts his body above the height of a pole. Ending4: stands on his hands and springs.\n\nAnswer format: ending1/ending2/ending3/ending4",
+        "input": "",
+        "output": "the correct answer is ending3",
+        "answer": "ending3",
+        "output_pred": "Ending1: runs into a car. Ending2: gets in a mat. Ending3: lifts his body above the height of a pole. Ending4:",
+        "pred": "",
+        "flag": false
+    },
+    {
+        "instruction": "Please choose the correct ending to complete the given sentence: High jump: The boy lifts his body above the height of a pole. The boy lands on his back on to a red mat. the boy\n\nEnding1: turns his body around on the mat. Ending2: gets up from the mat. Ending3: continues to lift his body over the pole. Ending4: wiggles out of the mat.\n\nAnswer format: ending1/ending2/ending3/ending4",
+        "input": "",
+        "output": "the correct answer is ending2",
+        "answer": "ending2",
+        "output_pred": "Answer format: ending1/ending2/ending3/ending4",
+        "pred": "ending1",
+        "flag": false
+    }
+]
