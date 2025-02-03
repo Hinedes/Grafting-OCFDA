@@ -366,7 +366,7 @@ def train(
         for name, p in model.named_parameters():
             if p.requires_grad:
                 print(name)
-        ddp_find_unused_parameters=False if ddp and adapter_name not in ["sift"] else True
+        ddp_find_unused_parameters=False if ddp and adapter_name not in ["sift", "super"] else True
     trainer = Trainer(
         model=model,
         train_dataset=train_data,
@@ -388,7 +388,7 @@ def train(
             output_dir=output_dir,
             save_total_limit=1,
             load_best_model_at_end=True if val_set_size > 0 else False,
-            ddp_find_unused_parameters=False if ddp and adapter_name not in ["sift"] else None,
+            ddp_find_unused_parameters=False if ddp and adapter_name not in ["sift", "super"] else None,
             group_by_length=group_by_length,
             report_to="wandb" if use_wandb else "none",
             run_name=wandb_run_name if use_wandb else None,
@@ -400,12 +400,12 @@ def train(
             tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True
         ),
     )
-    if adapter_name in ['sift', 'super']:
+    if adapter_name in ["sift", "super"]:
         sift.print_trainable_parameters()
         sift.set_trainer(trainer)
     model.config.use_cache = False
 
-    if not adapter_name in ["sift"]:
+    if not adapter_name in ["sift", "super"]:
         old_state_dict = model.state_dict
         model.state_dict = (
             lambda self, *_, **__: get_peft_model_state_dict(

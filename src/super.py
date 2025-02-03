@@ -46,21 +46,21 @@ class Super:
         """Register a sparse param for each param that need be updated sparsely
             and get the sparse grad by using backward hook
         """
-        for name, layer in self.model.named_parameters():
+        for name, param in self.model.named_parameters():
             # select the parameters needed to be trained sparsely
-            self.total_num += layer.numel()
-            if any([module in name for module in self.sparse_module]) and hasattr(layer, 'wanda_topk_indices'):
+            self.total_num += param.numel()
+            if any([module in name for module in self.sparse_module]) and hasattr(param, 'wanda_topk_indices'):
 
-                layer.requires_grad = True
+                param.requires_grad = True
                 # set the number of trainable components of the parameter according to the sparse rate
-                train_num = min(int(self.outliers_ratio * layer.numel()) + 1, layer.numel())
-                sparse_param = nn.Parameter(layer.new_zeros(train_num), requires_grad=True)
+                train_num = min(int(self.outliers_ratio * param.numel()) + 1, param.numel())
+                sparse_param = nn.Parameter(param.new_zeros(train_num), requires_grad=True)
                 sparse_param.grad = sparse_param.new_zeros(train_num)
                 sparse_param.train_num = train_num
 
-                sparse_idx = layer.wanda_topk_indices
+                sparse_idx = param.wanda_topk_indices
 
-                sparse_param.idx = torch.stack(torch.unravel_index(sparse_idx, layer.shape))
+                sparse_param.idx = torch.stack(torch.unravel_index(sparse_idx, param.shape))
                 ## help the initial parameter to find the sparse parameter
                 self.sparse_mapping[name] = sparse_param
                 self.grad_acc_count[name] = 0
@@ -68,23 +68,23 @@ class Super:
                 self.record[name] = []
 
                 # ## register a backward hook to get the 'sparse' grad
-                layer.register_hook(self.get_sparse_grad())
+                param.register_hook(self.get_sparse_grad())
 
                 # register it in the model so the framework can recognise the sparse param as a 'normal' param
                 setattr(self.model, name.replace('.', '_') + '_sparse', sparse_param)
                 # (name, p)
-                self.named_trainable_parameters_list.append((name, layer))
+                self.named_trainable_parameters_list.append((name, param))
                 # (named_sparse, sparse p)
                 self.named_parameters_in_optimizer_list.append((name + '_sparse', sparse_param))
 
             elif self.exception and any([item in name for item in self.exception]):
-                layer.requires_grad = True
-                self.named_trainable_parameters_list.append((name, layer))
-                self.named_parameters_in_optimizer_list.append((name, layer))
+                param.requires_grad = True
+                self.named_trainable_parameters_list.append((name, param))
+                self.named_parameters_in_optimizer_list.append((name, param))
             elif self.gradient_checkpointing and name == next(self.model.named_parameters())[0]:
-                layer.requires_grad = True
+                param.requires_grad = True
             else:
-                layer.requires_grad = False
+                param.requires_grad = False
 
             # ## gradient caculate after backward hook, we use following codes to ensure the first sparse module can get the sparse grad as we expect.
             # ## the first parameter in the model, the last parameter in backward propagation
@@ -122,22 +122,22 @@ class Super:
 
         def hook(x):
             with torch.no_grad():
-                for name, layer in self.named_trainable_parameters():
-                    if not (name in self.sparse_mapping.keys()) or layer.grad is None:
+                for name, param in self.named_trainable_parameters():
+                    if not (name in self.sparse_mapping.keys()) or param.grad is None:
                         return
 
                     # print(name)
                     sparse_param = self.sparse_mapping[name]
-                    grad = layer.grad.to(sparse_param)
+                    grad = param.grad.to(sparse_param)
 
                     ## clean the init grad
-                    layer.grad = None
+                    param.grad = None
                     # if self.trainer.state.epoch ==0.:
                     if not self.if_get_idx[name]:
                         self.if_get_idx[name] = True
 
                         sparse_idx = torch.flatten(abs(grad)).topk(sparse_param.train_num).indices.cpu().numpy()
-                        sparse_param.idx = np.stack(np.unravel_index(sparse_idx, layer.shape))
+                        sparse_param.idx = np.stack(np.unravel_index(sparse_idx, param.shape))
 
                         ## reset optimizer state
                         # for s in self.trainer.optimizer.state[p].values():
@@ -159,16 +159,16 @@ class Super:
 
                     ## get the sparse grad
                     if sparse_param.grad != None:
-                        sparse_param.grad += grad[sparse_param.idx]
+                        sparse_param.grad += grad[sparse_param.idx[0], sparse_param.idx[1]] # works both on old and new torch versions
                     else:
-                        sparse_param.grad = grad[sparse_param.idx]
+                        sparse_param.grad = grad[sparse_param.idx[0], sparse_param.idx[1]] # works both on old and new torch versions
 
                     self.grad_acc_count[name] += 1
                     if self.grad_acc_count[name] == self.grad_acc:
                         ## update the initial param sparsely
-                        delta = layer.data + torch.sparse_coo_tensor(sparse_param.idx, sparse_param, layer.shape).to(
-                            layer)
-                        layer.data.copy_(delta)
+                        delta = param.data + torch.sparse_coo_tensor(sparse_param.idx, sparse_param, param.shape).to(
+                            param)
+                        param.data.copy_(delta)
                         sparse_param.zero_()
                         self.grad_acc_count[name] = 0
                         # print('sparse update!')
