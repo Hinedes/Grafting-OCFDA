@@ -49,9 +49,11 @@ from peft import (
     set_peft_model_state_dict,
 )
 
+from src.super import Super
+
 from nirvana_utils import TrainerNirvana, copy_out_to_snapshot
 
-from sift import SIFT
+from SIFT.sift import SIFT
 
 def train(
         # model/data params
@@ -282,14 +284,24 @@ def train(
             num_virtual_tokens=num_virtual_tokens,
             task_type="CAUSAL_LM",
         )
-    if adapter_name not in ["sift", "no"]:
+    if adapter_name not in ["sift", "super", "no"]:
         model = get_peft_model(model, config)
         model.print_trainable_parameters()  # Be more transparent about the % of trainable params.
     elif adapter_name == "sift":
         sift = SIFT(model, sparse_rate=sparse_rate,
-                sparse_module=sparse_module,
-                exception=sparse_exception,
-                grad_acc=gradient_accumulation_steps)
+                    sparse_module=sparse_module,
+                    exception=sparse_exception,
+                    grad_acc=gradient_accumulation_steps)
+    elif adapter_name == "super":
+        model.seqlen = model.config.max_position_embeddings
+        sift = Super(model, 
+                      tokenizer,
+                      outliers_ratio=sparse_rate,
+                      sparse_module=sparse_module,
+                      exception=sparse_exception,
+                      grad_acc=gradient_accumulation_steps)
+    elif adapter_name == "no":
+        pass
     else:
         raise ValueError("Incorrect `adapter_name`")
     if adapter_name == "prefix-tuning":
@@ -388,7 +400,7 @@ def train(
             tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True
         ),
     )
-    if adapter_name=='sift':
+    if adapter_name in ['sift', 'super']:
         sift.print_trainable_parameters()
         sift.set_trainer(trainer)
     model.config.use_cache = False
