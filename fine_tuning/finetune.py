@@ -282,15 +282,16 @@ def train(
             num_virtual_tokens=num_virtual_tokens,
             task_type="CAUSAL_LM",
         )
-    if adapter_name not in ["sift"]:
+    if adapter_name not in ["sift", "no"]:
         model = get_peft_model(model, config)
         model.print_trainable_parameters()  # Be more transparent about the % of trainable params.
-    else:
+    elif adapter_name == "sift":
         sift = SIFT(model, sparse_rate=sparse_rate,
                 sparse_module=sparse_module,
                 exception=sparse_exception,
                 grad_acc=gradient_accumulation_steps)
-        print()
+    else:
+        raise ValueError("Incorrect `adapter_name`")
     if adapter_name == "prefix-tuning":
         model.to('cuda')
 
@@ -347,11 +348,13 @@ def train(
         model.is_parallelizable = True
         model.model_parallel = True
 
-    print(model)
-    print('\ntrainable parameters:')
-    for name, p in model.named_parameters():
-        if p.requires_grad:
-            print(name)
+    if not int(os.environ.get("LOCAL_RANK") or 0):
+        print(model)
+        print('\ntrainable parameters:')
+        for name, p in model.named_parameters():
+            if p.requires_grad:
+                print(name)
+        ddp_find_unused_parameters=False if ddp and adapter_name not in ["sift"] else True
     trainer = Trainer(
         model=model,
         train_dataset=train_data,
@@ -373,7 +376,7 @@ def train(
             output_dir=output_dir,
             save_total_limit=1,
             load_best_model_at_end=True if val_set_size > 0 else False,
-            ddp_find_unused_parameters=False if ddp else None,
+            ddp_find_unused_parameters=False if ddp and adapter_name not in ["sift"] else None,
             group_by_length=group_by_length,
             report_to="wandb" if use_wandb else "none",
             run_name=wandb_run_name if use_wandb else None,
