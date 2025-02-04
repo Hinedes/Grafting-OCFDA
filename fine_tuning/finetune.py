@@ -26,6 +26,7 @@ import sys
 import os
 
 from transformers import AutoModelForCausalLM, AutoTokenizer, LlamaTokenizer, AutoModel, Trainer  # noqa: F402
+from transformers.trainer_utils import get_last_checkpoint
 
 """
 Unused imports:
@@ -51,7 +52,7 @@ from peft import (
 
 from src.super import Super
 
-from nirvana_utils import TrainerNirvana, copy_out_to_snapshot
+from nirvana_utils import TrainerNirvana, copy_out_to_snapshot, copy_snapshot_to_out
 
 from SIFT.sift import SIFT
 
@@ -60,6 +61,7 @@ def train(
         base_model: str = "",  # the only required argument
         data_path: str = "yahma/alpaca-cleaned",
         output_dir: str = "./lora-alpaca",
+        overwrite_output_dir: bool = False,
         adapter_name: str = "lora",
         load_8bit : bool = False,
         # training hyperparams
@@ -164,7 +166,7 @@ def train(
     world_size = int(os.environ.get("WORLD_SIZE", 1))
     ddp = world_size != 1
     if ddp:
-        device_map = {"": int(os.environ.get("LOCAL_RANK") or 0)}
+        device_map = {"": int(os.environ.get("LOCAL_RANK", 0))}
         gradient_accumulation_steps = gradient_accumulation_steps // world_size
 
     # Check if parameter passed or if set within environ
@@ -192,7 +194,7 @@ def train(
             base_model,
             load_in_8bit=False,
             # torch_dtype=torch.float16,
-            device_map={"": int(os.environ.get("LOCAL_RANK") or 0)},
+            device_map={"": int(os.environ.get("LOCAL_RANK", 0))},
             trust_remote_code=True,
             attn_implementation=attn_implementation
         )
@@ -331,25 +333,39 @@ def train(
     else:
         data = load_dataset(data_path)
 
-    if resume_from_checkpoint:
-        # Check the available weights and load them
-        checkpoint_name = os.path.join(
-            resume_from_checkpoint, "pytorch_model.bin"
-        )  # Full checkpoint
-        if not os.path.exists(checkpoint_name):
-            checkpoint_name = os.path.join(
-                resume_from_checkpoint, "adapter_model.bin"
-            )  # only LoRA model - LoRA config above has to fit
-            resume_from_checkpoint = (
-                False  # So the trainer won't try loading its state
+    copy_snapshot_to_out(output_dir)
+    last_checkpoint = None
+    if os.path.isdir(output_dir) and not overwrite_output_dir:
+        last_checkpoint = get_last_checkpoint(output_dir)
+        if last_checkpoint is None and len(os.listdir(output_dir)) > 0:
+            raise ValueError(
+                f"Output directory ({output_dir}) already exists and is not empty. "
+                "Use --overwrite_output_dir to overcome."
             )
-        # The two files above have a different name depending on how they were saved, but are actually the same.
-        if os.path.exists(checkpoint_name):
-            print(f"Restarting from {checkpoint_name}")
-            adapters_weights = torch.load(checkpoint_name)
-            model = set_peft_model_state_dict(model, adapters_weights)
-        else:
-            print(f"Checkpoint {checkpoint_name} not found")
+        elif last_checkpoint is not None and resume_from_checkpoint is None:
+            print(
+                f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
+                "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
+            )
+    # if resume_from_checkpoint:
+    #     # Check the available weights and load them
+    #     checkpoint_name = os.path.join(
+    #         resume_from_checkpoint, "pytorch_model.bin"
+    #     )  # Full checkpoint
+    #     if not os.path.exists(checkpoint_name):
+    #         checkpoint_name = os.path.join(
+    #             resume_from_checkpoint, "adapter_model.bin"
+    #         )  # only LoRA model - LoRA config above has to fit
+    #         resume_from_checkpoint = (
+    #             False  # So the trainer won't try loading its state
+    #         )
+    #     # The two files above have a different name depending on how they were saved, but are actually the same.
+    #     if os.path.exists(checkpoint_name):
+    #         print(f"Restarting from {checkpoint_name}")
+    #         adapters_weights = torch.load(checkpoint_name)
+    #         model = set_peft_model_state_dict(model, adapters_weights)
+    #     else:
+    #         print(f"Checkpoint {checkpoint_name} not found")
 
     if val_set_size > 0:
         train_val = data["train"].train_test_split(
@@ -370,14 +386,14 @@ def train(
         model.is_parallelizable = True
         model.model_parallel = True
 
-    if not int(os.environ.get("LOCAL_RANK") or 0):
+    if not int(os.environ.get("LOCAL_RANK", 0)):
         print(model)
         print('\ntrainable parameters:')
         for name, p in model.named_parameters():
             if p.requires_grad:
                 print(name)
         ddp_find_unused_parameters=False if ddp and adapter_name not in ["sift", "super"] else True
-    trainer = Trainer(
+    trainer = TrainerNirvana(
         model=model,
         train_dataset=train_data,
         eval_dataset=val_data,
@@ -415,7 +431,7 @@ def train(
         sift.set_trainer(trainer)
     model.config.use_cache = False
 
-    if not adapter_name in ["sift", "super"]:
+    if adapter_name not in ["sift", "super"]:
         old_state_dict = model.state_dict
         model.state_dict = (
             lambda self, *_, **__: get_peft_model_state_dict(
@@ -426,14 +442,29 @@ def train(
     # if torch.__version__ >= "2" and sys.platform != "win32":
     #     model = torch.compile(model)
 
-    trainer.train(resume_from_checkpoint=resume_from_checkpoint)
+    checkpoint = None
+    if resume_from_checkpoint is not None:
+        checkpoint = resume_from_checkpoint
+    elif last_checkpoint is not None:
+        checkpoint = last_checkpoint
+        if (not int(os.environ.get("LOCAL_RANK", 0)) 
+            and use_wandb):
+            import wandb
+            with open(os.path.join(output_dir, "run_id.txt"), 'r') as f:
+                run_id = f.readline()
+                print(run_id, '\n'*5)
+                wandb.init(
+                    id=run_id,
+                    resume=True,
+                )
+    trainer.train(resume_from_checkpoint=checkpoint)
 
-    if not int(os.environ.get("LOCAL_RANK") or 0):
+    if not int(os.environ.get("LOCAL_RANK", 0)):
         # save pretrained
         model.save_pretrained(output_dir)
 
-        # some yandex infrastructure logic
-        os.system(f"rm -rf {output_dir}/checkpoint*")
+        # # some yandex infrastructure logic
+        # os.system(f"rm -rf {output_dir}/checkpoint*")
         print('\n'*10)
         print("copying result to snapshot")
         print('-'*20)

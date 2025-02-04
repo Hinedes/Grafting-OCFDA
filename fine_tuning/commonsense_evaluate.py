@@ -55,7 +55,6 @@ def main(
     assert args.batch_size == 1, "evaluate() doesn't work correctly for batch_size > 1"
 
     print(args.lora_weights)
-    os.system(f"mkdir {args.lora_weights} -p")
     copy_snapshot_to_out(args.lora_weights)
 
     def evaluate(
