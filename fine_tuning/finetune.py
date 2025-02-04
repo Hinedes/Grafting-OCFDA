@@ -110,6 +110,7 @@ def train(
         # SIFT params
         sparse_rate=0.001,
         sparse_exception=[],
+        random_indices=False,
 ):
     compile = bool(compile)
     sparse_module = target_modules
@@ -150,6 +151,9 @@ def train(
         f"attn_implementation: {attn_implementation}\n"
         f"optimizer_name: {optimizer_name}\n"
         f"max_steps: {max_steps}\n"
+        f"sparse_rate: {sparse_rate}\n"
+        f"sparse_exception: {sparse_exception}\n"
+        f"random_indices: {random_indices}\n"
     )
     assert (
         base_model
@@ -288,18 +292,24 @@ def train(
         model = get_peft_model(model, config)
         model.print_trainable_parameters()  # Be more transparent about the % of trainable params.
     elif adapter_name == "sift":
-        sift = SIFT(model, sparse_rate=sparse_rate,
-                    sparse_module=sparse_module,
-                    exception=sparse_exception,
-                    grad_acc=gradient_accumulation_steps)
+        sift = SIFT(
+            model, 
+            sparse_rate=sparse_rate,
+            sparse_module=sparse_module,
+            exception=sparse_exception,
+            grad_acc=gradient_accumulation_steps,
+            random_indices=random_indices,
+        )
     elif adapter_name == "super":
         model.seqlen = model.config.max_position_embeddings
-        sift = Super(model, 
-                      tokenizer,
-                      outliers_ratio=sparse_rate,
-                      sparse_module=sparse_module,
-                      exception=sparse_exception,
-                      grad_acc=gradient_accumulation_steps)
+        sift = Super(
+            model, 
+            tokenizer,
+            outliers_ratio=sparse_rate,
+            sparse_module=sparse_module,
+            exception=sparse_exception,
+            grad_acc=gradient_accumulation_steps,
+        )
     elif adapter_name == "no":
         pass
     else:

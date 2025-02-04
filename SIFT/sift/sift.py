@@ -4,7 +4,7 @@ import numpy as np
 import random
 
 class SIFT():
-    def __init__(self, model, sparse_rate, sparse_module, exception=[], grad_acc=1, gradient_checkpointing=False) -> None:
+    def __init__(self, model, sparse_rate, sparse_module, exception=[], grad_acc=1, gradient_checkpointing=False, random_indices=False) -> None:
         self.model = model
         self.total_num = 0
         self.gradient_checkpointing = gradient_checkpointing
@@ -24,6 +24,8 @@ class SIFT():
         
         self.if_get_idx = dict()
         self.record = dict()
+
+        self.random_indices = random_indices
         
         ## Record all the trainable parameters(the initial parameter that need be updated sparsely).
         self.named_trainable_parameters_list = list()
@@ -129,17 +131,15 @@ class SIFT():
                     # if self.trainer.state.epoch ==0.:
                     if not self.if_get_idx[name]:
                         self.if_get_idx[name] = True
-
-                        sparse_idx = torch.flatten(abs(grad)).topk(sparse_param.train_num).indices.cpu().numpy()
-                        sparse_param.idx = np.stack(np.unravel_index(sparse_idx, param.shape))
-
-                        ## reset optimizer state
-                        # for s in self.trainer.optimizer.state[p].values():
-                        #     s.zero_()
+                        if not self.random_indices:
+                            sparse_idx = torch.flatten(abs(grad)).topk(sparse_param.train_num).indices.cpu().numpy()
+                        else:
+                            sparse_idx = np.random.choice(param.numel(), sparse_param.train_num, replace=False)
                         if name == list(self.sparse_mapping.keys())[-1]:
                             print('switch idx')
                             # self.trainer.create_optimizer()
                             # print(sparse_param.idx)
+                        sparse_param.idx = np.stack(np.unravel_index(sparse_idx, param.shape))
                         return
 
                     # ##if you are interested in grad proportion, uncomment following code
