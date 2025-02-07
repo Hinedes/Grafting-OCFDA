@@ -75,6 +75,7 @@ def train(
         use_gradient_checkpointing: bool = False,
         eval_step: int = 200,
         save_step: int = 200,
+        seed=0,
         # lora hyperparams
         lora_r: int = 8,
         lora_alpha: int = 16,
@@ -156,6 +157,7 @@ def train(
         f"sparse_rate: {sparse_rate}\n"
         f"sparse_exception: {sparse_exception}\n"
         f"random_indices: {random_indices}\n"
+        f"seed: {seed}\n"
     )
     assert (
         base_model
@@ -290,6 +292,7 @@ def train(
             num_virtual_tokens=num_virtual_tokens,
             task_type="CAUSAL_LM",
         )
+    torch.manual_seed(seed)
     if adapter_name not in ["sift", "super", "no"]:
         model = get_peft_model(model, config)
         model.print_trainable_parameters()  # Be more transparent about the % of trainable params.
@@ -405,6 +408,7 @@ def train(
             warmup_steps=100,
             num_train_epochs=num_epochs,
             learning_rate=learning_rate,
+            seed=seed,
             fp16=True,
             logging_steps=10,
             evaluation_strategy="steps" if val_set_size > 0 else "no",
