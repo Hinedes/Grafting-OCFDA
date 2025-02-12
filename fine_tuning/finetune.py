@@ -55,6 +55,7 @@ from src.super import Super
 from nirvana_utils import TrainerNirvana, copy_out_to_snapshot, copy_snapshot_to_out
 
 from SIFT.sift import SIFT
+from dense_plus_sparse_linear import get_dense_plus_sparse_model
 
 def train(
         # model/data params
@@ -195,7 +196,7 @@ def train(
         model = AutoModelForCausalLM.from_pretrained(
             base_model,
             load_in_8bit=False,
-            # torch_dtype=torch.float16,
+            torch_dtype=torch.float16 if adapter_name != "sift" else torch.float32,
             device_map={"": int(os.environ.get("LOCAL_RANK", 0))},
             trust_remote_code=True,
             attn_implementation=attn_implementation
@@ -307,14 +308,25 @@ def train(
         )
     elif adapter_name == "super":
         model.seqlen = model.config.max_position_embeddings
-        sift = Super(
+        # sift = Super(
+        #     model, 
+        #     tokenizer,
+        #     outliers_ratio=sparse_rate,
+        #     sparse_module=sparse_module,
+        #     exception=sparse_exception,
+        #     grad_acc=gradient_accumulation_steps,
+        # )
+        get_dense_plus_sparse_model(
             model, 
-            tokenizer,
-            outliers_ratio=sparse_rate,
-            sparse_module=sparse_module,
+            target_modules_list=target_modules,
+            sparse_rate=sparse_rate,
+            indices_choice="random" if random_indices else "super",
+            tokenizer=tokenizer,
             exception=sparse_exception,
-            grad_acc=gradient_accumulation_steps,
         )
+        print('\n'*3)
+        print(model)
+        print('\n'*3)
     elif adapter_name == "no":
         pass
     else:
@@ -430,7 +442,7 @@ def train(
             tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True
         ),
     )
-    if adapter_name in ["sift", "super"]:
+    if adapter_name in ["sift"]:
         sift.print_trainable_parameters()
         sift.set_trainer(trainer)
     model.config.use_cache = False
@@ -461,6 +473,7 @@ def train(
                     id=run_id,
                     resume=True,
                 )
+
     trainer.train(resume_from_checkpoint=checkpoint)
 
     if not int(os.environ.get("LOCAL_RANK", 0)):

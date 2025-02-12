@@ -49,14 +49,14 @@ class dense_plus_sparse_linear(torch.autograd.Function):
 
 
 class SparseDenseLinear(nn.Module):
-    def __init__(self, base_layer, sparsity_level: float, indices=None):
+    def __init__(self, base_layer, sparse_rate: float, indices=None):
         super().__init__()
-        assert 0.0 <= sparsity_level <= 1.0, "sparsity_level shoud be a ratio between 0 and 1"
+        assert 0.0 <= sparse_rate <= 1.0, "sparse_rate shoud be a ratio between 0 and 1"
         self.weight = base_layer.weight
         self.bias = base_layer.bias
         self.num_elements = self.weight.numel()
-        self.num_nonzero = int(self.weight.numel() * (1 - sparsity_level))
-        self.sparsity_level = sparsity_level
+        self.num_nonzero = int(self.weight.numel() * (sparse_rate))
+        self.sparse_rate = sparse_rate
 
         if getattr(base_layer, "state", None) is not None:
             self.state = base_layer.state
@@ -74,10 +74,10 @@ class SparseDenseLinear(nn.Module):
         return dense_plus_sparse_linear.apply(input, self.weight, self.indices, self.values, self.bias)
     
 
-def get_dense_plus_sparse_model(model, target_modules_list, sparsity_level=0.99, indices_choice="random", tokenizer=None, exception=[]):
+def get_dense_plus_sparse_model(model, target_modules_list, sparse_rate=0.01, indices_choice="random", tokenizer=None, exception=[]):
     if indices_choice == "super":
         assert tokenizer is not None, "`Super` option requires tokenizer to determine outliers indices."
-        prepare_super_mask(model, tokenizer, dev=model.device, outliers_ratio=1-sparsity_level)
+        prepare_super_mask(model, tokenizer, dev=model.device, outliers_ratio=sparse_rate)
     
     for name, p in model.named_parameters():
         if not any([item in name for item in exception]):
@@ -94,7 +94,7 @@ def get_dense_plus_sparse_model(model, target_modules_list, sparsity_level=0.99,
             indices = old_module.wanda_topk_indices
         else:
             indices = None
-        new_module = SparseDenseLinear(old_module, sparsity_level=sparsity_level, indices=indices)
+        new_module = SparseDenseLinear(old_module, sparse_rate=sparse_rate, indices=indices)
         new_module.weight.requires_grad_(False)
         setattr(parent_module, child_name, new_module)
 
