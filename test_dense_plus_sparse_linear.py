@@ -161,5 +161,53 @@ def test_memory(input_dtype, weight_dtype, values_dtype, index_dtype, input_shap
     assert total_number_of_tensors == 5 if not is_bias else 6
 
 
+@pytest.mark.parametrize("input_dtype", [torch.float32, torch.bfloat16])
+@pytest.mark.parametrize("weight_dtype", [torch.float32, torch.bfloat16])
+@pytest.mark.parametrize("index_dtype", [torch.int32, torch.int64])
+@pytest.mark.parametrize("input_shape", [(32, 10), (8, 16, 10)])
+@pytest.mark.parametrize("is_bias", [False])
+@pytest.mark.parametrize("device", ["cuda:0"])
+def test_layer(input_dtype, weight_dtype, index_dtype, input_shape, 
+                       is_bias, device):
+    autocast_enabled = False
+    if not (input_dtype == weight_dtype == torch.float32):
+        autocast_enabled = True
+    torch.manual_seed(42)
+
+    input, weight, _, _, bias = prepare_test_data(
+        input_dtype, weight_dtype, torch.float32, index_dtype, input_shape, is_bias, device
+    )
+    sparsity_level = 0.99
+    in_features = input_shape[-1]
+    out_features = 20
+
+    linear = torch.nn.Linear(in_features, out_features, bias=is_bias, device=device)
+    linear.weight.data = weight
+    if is_bias:
+        linear.bias.data = bias
+
+    sparse_dense_linear = SparseDenseLinear(linear, sparsity_level)
+
+    assert id(sparse_dense_linear.weight) == id(linear.weight)
+    with torch.no_grad():
+        with torch.autocast(device_type="cpu" if device == "cpu" else "cuda:0", dtype=torch.bfloat16, enabled=autocast_enabled):
+            output_linear = linear(input)
+            output_sparse = sparse_dense_linear(input)
+            assert output_linear.eq(output_sparse).all()
+    opt = torch.optim.AdamW(sparse_dense_linear.parameters(), lr=1.0)
+    assert len(opt.param_groups[0]["params"]) == 2 if not is_bias else 3
+    with torch.autocast(device_type="cpu" if device == "cpu" else "cuda:0", dtype=torch.bfloat16, enabled=autocast_enabled):
+        sparse_dense_linear(input).norm().backward()
+    assert sparse_dense_linear.values.grad is not None
+    opt.step()
+    assert sparse_dense_linear.weight.eq(linear.weight).all()
+    assert not sparse_dense_linear.values.eq(torch.zeros_like(sparse_dense_linear.values)).all()
+    with torch.no_grad():
+        with torch.autocast(device_type="cpu" if device == "cpu" else "cuda:0", dtype=torch.bfloat16, enabled=autocast_enabled):
+            output_linear = linear(input)
+            output_sparse = sparse_dense_linear(input)
+            assert not output_linear.eq(output_sparse).all()
+
+
 if __name__ == "main":
     pytest.main([__file__])
