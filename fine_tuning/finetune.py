@@ -55,7 +55,7 @@ from src.super import Super
 from nirvana_utils import TrainerNirvana, copy_out_to_snapshot, copy_snapshot_to_out
 
 from SIFT.sift import SIFT
-from dense_plus_sparse_linear import get_dense_plus_sparse_model
+from dense_plus_sparse_linear import get_dense_plus_sparse_model, get_sparse_dense_model_state_dict
 
 def train(
         # model/data params
@@ -407,7 +407,7 @@ def train(
         for name, p in model.named_parameters():
             if p.requires_grad:
                 print(name)
-        ddp_find_unused_parameters=False if ddp and adapter_name not in ["sift", "super"] else True
+        ddp_find_unused_parameters=False if ddp and adapter_name not in ["sift"] else True
     trainer = TrainerNirvana(
         model=model,
         train_dataset=train_data,
@@ -430,7 +430,7 @@ def train(
             output_dir=output_dir,
             save_total_limit=1,
             load_best_model_at_end=True if val_set_size > 0 else False,
-            ddp_find_unused_parameters=False if ddp and adapter_name not in ["sift", "super"] else None,
+            ddp_find_unused_parameters=False if ddp and adapter_name not in ["sift"] else None,
             group_by_length=group_by_length,
             report_to="wandb" if use_wandb else "none",
             run_name=wandb_run_name if use_wandb else None,
@@ -447,10 +447,13 @@ def train(
         sift.set_trainer(trainer)
     model.config.use_cache = False
 
+    # if adapter_name not in ["sift"]:
+    # TODO load only adapter
     if adapter_name not in ["sift", "super"]:
         old_state_dict = model.state_dict
+        get_state_dict_func = get_sparse_dense_model_state_dict if adapter_name == "super" else get_peft_model_state_dict
         model.state_dict = (
-            lambda self, *_, **__: get_peft_model_state_dict(
+            lambda self, *_, **__: get_state_dict_func(
                 self, old_state_dict()
             )
         ).__get__(model, type(model))

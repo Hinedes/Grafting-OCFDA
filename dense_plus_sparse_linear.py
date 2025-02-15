@@ -62,8 +62,8 @@ class SparseDenseLinear(nn.Module):
             self.state = base_layer.state
 
         if indices is None:
-            indices = torch.randperm(self.num_elements-1)[:self.num_nonzero]
-        indices = indices.to(dtype=torch.int32, device=self.weight.device)
+            indices = torch.randperm(self.num_elements-1)
+        indices = indices.to(dtype=torch.int32, device=self.weight.device)[:self.num_nonzero]
         
         self.values = nn.Parameter(
             torch.zeros(self.num_nonzero, dtype=torch.float32, device=self.weight.device)
@@ -78,10 +78,6 @@ def get_dense_plus_sparse_model(model, target_modules_list, sparse_rate=0.01, in
     if indices_choice == "super":
         assert tokenizer is not None, "`Super` option requires tokenizer to determine outliers indices."
         prepare_super_mask(model, tokenizer, dev=model.device, outliers_ratio=sparse_rate)
-    
-    for name, p in model.named_parameters():
-        if not any([item in name for item in exception]):
-            p.requires_grad_(False)
 
     def _get_submodules(key):
         parent = model.get_submodule(".".join(key.split(".")[:-1]))
@@ -90,24 +86,9 @@ def get_dense_plus_sparse_model(model, target_modules_list, sparse_rate=0.01, in
         return parent, target, target_name
 
     def _replace_module(parent_module, child_name, old_module):
-        if hasattr(old_module, "wanda_topk_indices"):
-            indices = old_module.wanda_topk_indices
-        else:
-            indices = None
+        indices = getattr(old_module.weight, "wanda_topk_indices", None)
         new_module = SparseDenseLinear(old_module, sparse_rate=sparse_rate, indices=indices)
-        new_module.weight.requires_grad_(False)
         setattr(parent_module, child_name, new_module)
-
-        # new_module.weight = old_module.weight
-        # if old_module.bias is not None:
-        #     new_module.bias = old_module.bias
-        # if getattr(old_module, "state", None) is not None:
-        #     new_module.state = old_module.state
-
-        # # dispatch to correct device
-        # for name, module in new_module.named_modules():
-        #     if "lora_" in name:
-        #         module.to(old_module.weight.device)
 
     for module_name, _ in model.named_modules():
         if not any(module_name.endswith(target_key) for target_key in target_modules_list):
@@ -115,3 +96,12 @@ def get_dense_plus_sparse_model(model, target_modules_list, sparse_rate=0.01, in
 
         parent, target, target_name = _get_submodules(module_name)
         _replace_module(parent, target_name, target)
+    
+    for name, p in model.named_parameters():
+        if not ("values" in name or any([item in name for item in exception])):
+            p.requires_grad_(False)
+
+def get_sparse_dense_model_state_dict(model, state_dict=None):
+    if state_dict is None:
+        state_dict = model.state_dict()
+    return {k: state_dict[k] for k in state_dict if "values" in k or "indices" in k}
