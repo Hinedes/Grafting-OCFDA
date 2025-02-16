@@ -112,7 +112,7 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, tokenizer=None):
             case 'c4':
                 train_loader, test_loader = get_c4(nsamples, seed, seqlen, tokenizer)
 
-        os.makedirs(full_cache_dir)
+        os.makedirs(full_cache_dir, exist_ok=True)
 
         torch.save(train_loader, full_cache_dir_train)
         torch.save(test_loader, full_cache_dir_test)
