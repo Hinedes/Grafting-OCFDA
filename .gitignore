@@ -4,4 +4,3 @@ venv
 /experiments/instruction_finetuning/exp/
 /experiments/out/
 **/__pycache__/
-fine_tuning/dataset

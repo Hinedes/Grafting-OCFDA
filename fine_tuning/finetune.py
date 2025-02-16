@@ -40,6 +40,9 @@ PEFT_PATH = os.path.abspath(os.path.join(os.getcwd(), "peft/src/"))
 sys.path.insert(0, PEFT_PATH)
 sys.path.insert(1, BASE_DIR)
 
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
+
 from peft import (
     LoraConfig,
     BottleneckConfig,
@@ -88,7 +91,7 @@ def train(
         adapter_dropout: float = 0.0,
         use_parallel_adapter: bool = False,
         use_adapterp: bool = False,
-        target_modules: List[str] = None,
+        target_modules: List[str] = ["q_proj", "k_proj", "v_proj", "up_proj", "down_proj"],
         scaling: Union[float, str] = 1.0,
         # prefix tuning hyperparams
         num_virtual_tokens: int = 30,
