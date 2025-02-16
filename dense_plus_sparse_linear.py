@@ -62,7 +62,8 @@ class SparseDenseLinear(nn.Module):
             self.state = base_layer.state
 
         if indices is None:
-            indices = torch.randperm(self.num_elements-1)
+            # indices = torch.randperm(self.num_elements-1)
+            indices = torch.randint(0, self.num_elements, (self.num_nonzero,))
         indices = indices.to(dtype=torch.int32, device=self.weight.device)[:self.num_nonzero]
         
         self.values = nn.Parameter(
@@ -93,13 +94,15 @@ def get_dense_plus_sparse_model(model, target_modules_list, sparse_rate=0.01, in
     for module_name, _ in model.named_modules():
         if not any(module_name.endswith(target_key) for target_key in target_modules_list):
             continue
-
+        
         parent, target, target_name = _get_submodules(module_name)
         _replace_module(parent, target_name, target)
     
     for name, p in model.named_parameters():
         if not ("values" in name or any([item in name for item in exception])):
             p.requires_grad_(False)
+    
+    return model
 
 def get_sparse_dense_model_state_dict(model, state_dict=None):
     if state_dict is None:

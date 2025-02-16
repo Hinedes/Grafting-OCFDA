@@ -78,13 +78,16 @@ def main(
             **kwargs,
         )
         with torch.no_grad():
-            generation_output = model.generate(
-                input_ids=input_ids,
-                generation_config=generation_config,
-                return_dict_in_generate=True,
-                output_scores=True,
-                max_new_tokens=max_new_tokens,
-            )
+            
+            # TODO change `dense_plus_sparse_linear` so that it can work without autocast
+            with torch.autocast(device_type="cuda", dtype=torch.float16):
+                generation_output = model.generate(
+                    input_ids=input_ids,
+                    generation_config=generation_config,
+                    return_dict_in_generate=True,
+                    output_scores=True,
+                    max_new_tokens=max_new_tokens,
+                )
         s = generation_output.sequences
         outputs = tokenizer.batch_decode(s, skip_special_tokens=True)
         outputs = [o.split("### Response:")[1].strip() for o in outputs]
@@ -194,7 +197,7 @@ def parse_args():
     parser.add_argument('--dataset', choices=["boolq", "piqa", "social_i_qa", "hellaswag", "winogrande", "ARC-Challenge", "ARC-Easy", "openbookqa"],
                         required=True)
     parser.add_argument('--model', choices=['LLaMA-7B', "LLaMA-13B",'BLOOM-7B', 'GPT-j-6B', 'LLaMA-3-8B', 'LLaMA-3.1-8B', 'LLaMA-3.2-1B'], required=True)
-    parser.add_argument('--adapter', choices=['LoRA', 'AdapterP', 'AdapterH', 'Parallel', 'no', 'orig'],
+    parser.add_argument('--adapter', choices=['LoRA', 'AdapterP', 'AdapterH', 'Parallel', 'no', 'orig', 'super'],
                         required=True)
     parser.add_argument('--base_model', required=True)
     parser.add_argument('--lora_weights', required=True)
@@ -202,6 +205,10 @@ def parse_args():
     parser.add_argument('--load_8bit', action='store_true', default=False)
 
     parser.add_argument('--debug', action='store_true', default=False)
+
+    # TODO rewrite it so that one don't have to pass these args
+    parser.add_argument('--target_modules', nargs='+', default=["q_proj", "k_proj", "v_proj", "up_proj", "down_proj"])
+    parser.add_argument('--sparse_rate', type=float, default=0.01171875)
 
     return parser.parse_args()
 
@@ -240,13 +247,29 @@ def load_model(args) -> tuple:
                 device_map="auto",
                 trust_remote_code=True,
             ) # fix zwq
-            if args.adapter != "orig":
+            if args.adapter not in ["orig", "super"]:
                 model = PeftModel.from_pretrained(
                     model,
                     lora_weights,
                     torch_dtype=torch.float16,
                     device_map={"":0}
                 )
+            elif args.adapter == "super":
+
+                # TODO rewrite, for now it is just copypaste from `finetune.py`
+                # (requires the same input arguments as training)
+                from dense_plus_sparse_linear import get_dense_plus_sparse_model
+                from safetensors.torch import load_file
+                print(model)
+                model = get_dense_plus_sparse_model(
+                    model, 
+                    target_modules_list=args.target_modules,
+                    sparse_rate=args.sparse_rate,
+                    indices_choice="random",
+                )
+                print(model)
+                state_dict = load_file(f"{lora_weights}/model.safetensors")
+                model.load_state_dict(state_dict, strict=False)
         else:
             model = AutoModelForCausalLM.from_pretrained(
                 lora_weights,
@@ -256,7 +279,6 @@ def load_model(args) -> tuple:
                 device_map="auto",
                 trust_remote_code=True,
             )
-            # load_model(model, os.path.join(lora_weights, "model.safetensors"))
     elif device == "mps":
         model = AutoModelForCausalLM.from_pretrained(
             base_model,

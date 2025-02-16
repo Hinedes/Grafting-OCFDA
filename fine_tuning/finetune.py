@@ -316,7 +316,7 @@ def train(
         #     exception=sparse_exception,
         #     grad_acc=gradient_accumulation_steps,
         # )
-        get_dense_plus_sparse_model(
+        model = get_dense_plus_sparse_model(
             model, 
             target_modules_list=target_modules,
             sparse_rate=sparse_rate,
