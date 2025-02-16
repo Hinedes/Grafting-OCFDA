@@ -78,7 +78,7 @@ def main(
             **kwargs,
         )
         with torch.no_grad():
-            
+
             # TODO change `dense_plus_sparse_linear` so that it can work without autocast
             with torch.autocast(device_type="cuda", dtype=torch.float16):
                 generation_output = model.generate(
@@ -260,6 +260,7 @@ def load_model(args) -> tuple:
                 # (requires the same input arguments as training)
                 from dense_plus_sparse_linear import get_dense_plus_sparse_model
                 from safetensors.torch import load_file
+                import glob
                 print(model)
                 model = get_dense_plus_sparse_model(
                     model, 
@@ -268,7 +269,30 @@ def load_model(args) -> tuple:
                     indices_choice="random",
                 )
                 print(model)
-                state_dict = load_file(f"{lora_weights}/model.safetensors")
+                def load_safetensors_model(model_path):
+                    if os.path.isfile(f"{model_path}"):
+                        state_dict = load_file(f"{model_path}")
+                        return state_dict
+
+                    pattern = os.path.join(os.path.dirname(model_path), "model-*-of-*.safetensors")
+                    print('\n'*3)
+                    print(pattern)
+                    print('\n'*3)
+                    shard_files = sorted(glob.glob(pattern))
+                    if not shard_files:
+                        raise FileNotFoundError(f"No safetensors file or shards found for base path: {model_path}")
+                    
+                    print(f"Found {len(shard_files)} shard files:")
+                    for shard in shard_files:
+                        print("  ", shard)
+                    
+                    state_dict = {}
+                    for shard in shard_files:
+                        shard_state = load_file(shard)
+                        state_dict.update(shard_state)
+                    
+                    return state_dict
+                state_dict = load_safetensors_model(f"{lora_weights}/model.safetensors")
                 model.load_state_dict(state_dict, strict=False)
         else:
             model = AutoModelForCausalLM.from_pretrained(

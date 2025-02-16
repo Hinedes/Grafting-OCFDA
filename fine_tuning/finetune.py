@@ -40,9 +40,6 @@ PEFT_PATH = os.path.abspath(os.path.join(os.getcwd(), "peft/src/"))
 sys.path.insert(0, PEFT_PATH)
 sys.path.insert(1, BASE_DIR)
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-
-
 from peft import (
     LoraConfig,
     BottleneckConfig,
