@@ -4,7 +4,8 @@ import math
 
 from src.mask import prepare_super_mask
 
-class dense_plus_sparse_linear(torch.autograd.Function):
+
+class DensePlusSparseLinear(torch.autograd.Function):
     @staticmethod
     @torch.amp.custom_fwd(device_type="cuda")
     def forward(ctx, input, weight, indices, values, bias=None):
@@ -72,7 +73,7 @@ class SparseDenseLinear(nn.Module):
         self.register_buffer('indices', indices)
         
     def forward(self, input):
-        return dense_plus_sparse_linear.apply(input, self.weight, self.indices, self.values, self.bias)
+        return DensePlusSparseLinear.apply(input, self.weight, self.indices, self.values, self.bias)
     
 
 def get_dense_plus_sparse_model(model, target_modules_list, sparse_rate=0.01, indices_choice="random", tokenizer=None, exception=[]):
@@ -103,6 +104,7 @@ def get_dense_plus_sparse_model(model, target_modules_list, sparse_rate=0.01, in
             p.requires_grad_(False)
     
     return model
+
 
 def get_sparse_dense_model_state_dict(model, state_dict=None):
     if state_dict is None:

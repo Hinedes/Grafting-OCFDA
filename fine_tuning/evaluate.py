@@ -181,11 +181,17 @@ def parse_args():
     parser.add_argument('--dataset', choices=['AddSub', 'MultiArith', 'SingleEq', 'gsm8k', 'AQuA', 'SVAMP'],
                         required=True)
     parser.add_argument('--model', choices=['LLaMA-7B', "LLaMA-13B",'BLOOM-7B', 'GPT-j-6B', 'LLaMA-3-8B', 'LLaMA-3.1-8B', 'LLaMA-3.2-1B'], required=True)
-    parser.add_argument('--adapter', choices=['LoRA', 'AdapterP', 'AdapterH', 'Parallel', 'no', 'orig'],
+    parser.add_argument('--adapter', choices=['LoRA', 'AdapterP', 'AdapterH', 'Parallel', 'no', 'orig', 'super'],
                         required=True)
     parser.add_argument('--base_model', required=True)
     parser.add_argument('--lora_weights', required=True)
     parser.add_argument('--load_8bit', action='store_true', default=False)
+
+    parser.add_argument('--debug', action='store_true', default=False)
+
+    # TODO rewrite it so that one don't have to pass these args
+    parser.add_argument('--target_modules', nargs='+', default=["q_proj", "k_proj", "v_proj", "up_proj", "down_proj"])
+    parser.add_argument('--sparse_rate', type=float, default=0.013392857142857142)
 
     return parser.parse_args()
 
@@ -207,10 +213,14 @@ def load_model(args) -> tuple:
         raise ValueError(f'can not find lora weight, the value is: {lora_weights}')
 
     load_8bit = args.load_8bit
-    if args.model == 'LLaMA-7B':
-        tokenizer = LlamaTokenizer.from_pretrained(base_model)
-    else:
-        tokenizer = AutoTokenizer.from_pretrained(base_model)
+    # if "LLaMA" in args.model:
+    #     tokenizer = LlamaTokenizer.from_pretrained(base_model)
+    # else:
+    tokenizer = AutoTokenizer.from_pretrained(base_model)
+    tokenizer.padding_side = "left"
+    tokenizer.pad_token_id = (
+        0  # unk. we want this to be different from the eos token
+    )
     if device == "cuda":
         if args.adapter != "no":
             model = AutoModelForCausalLM.from_pretrained(
@@ -220,13 +230,55 @@ def load_model(args) -> tuple:
                 device_map="auto",
                 trust_remote_code=True,
             )  # fix zwq
-            if args.adapter != "orig":
+            if args.adapter not in ["orig", "super"]:
                 model = PeftModel.from_pretrained(
                     model,
                     lora_weights,
                     torch_dtype=torch.float16,
                     device_map={"": 0}
                 )
+            elif args.adapter == "super":
+
+                # TODO rewrite, for now it is just copypaste from `finetune.py`
+                # (requires the same input arguments as training)
+                from dense_plus_sparse_linear import get_dense_plus_sparse_model
+                from safetensors.torch import load_file
+                import glob
+                print(model)
+                model = get_dense_plus_sparse_model(
+                    model,
+                    target_modules_list=args.target_modules,
+                    sparse_rate=args.sparse_rate,
+                    indices_choice="random",
+                )
+                print(model)
+
+                def load_safetensors_model(model_path):
+                    if os.path.isfile(f"{model_path}"):
+                        state_dict = load_file(f"{model_path}")
+                        return state_dict
+
+                    pattern = os.path.join(os.path.dirname(model_path), "model-*-of-*.safetensors")
+                    print('\n' * 3)
+                    print(pattern)
+                    print('\n' * 3)
+                    shard_files = sorted(glob.glob(pattern))
+                    if not shard_files:
+                        raise FileNotFoundError(f"No safetensors file or shards found for base path: {model_path}")
+
+                    print(f"Found {len(shard_files)} shard files:")
+                    for shard in shard_files:
+                        print("  ", shard)
+
+                    state_dict = {}
+                    for shard in shard_files:
+                        shard_state = load_file(shard)
+                        state_dict.update(shard_state)
+
+                    return state_dict
+
+                state_dict = load_safetensors_model(f"{lora_weights}/model.safetensors")
+                model.load_state_dict(state_dict, strict=False)
         else:
             model = AutoModelForCausalLM.from_pretrained(
                 lora_weights,
@@ -236,7 +288,6 @@ def load_model(args) -> tuple:
                 device_map="auto",
                 trust_remote_code=True,
             )
-            # load_model(model, os.path.join(lora_weights, "model.safetensors"))
     elif device == "mps":
         model = AutoModelForCausalLM.from_pretrained(
             base_model,
@@ -272,6 +323,7 @@ def load_model(args) -> tuple:
             model = torch.compile(model)
 
     return tokenizer, model
+
 
 
 def load_instruction(args) -> str:
