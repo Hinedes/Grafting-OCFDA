@@ -11,7 +11,7 @@ class DensePlusSparseLinear(torch.autograd.Function):
     def forward(ctx, input, weight, indices, values, bias=None):
         ctx.save_for_backward(input, weight, indices, values, bias)
         
-        dense_plus_sparse = weight.view(-1).scatter_add(0, indices.to(torch.int64), values)
+        dense_plus_sparse = weight.view(-1).scatter_add(0, indices.to(torch.int64), values.to(weight.dtype))
         dense_plus_sparse = dense_plus_sparse.view_as(weight)
 
         return torch.nn.functional.linear(input, dense_plus_sparse, bias)
