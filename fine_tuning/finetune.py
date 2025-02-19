@@ -55,6 +55,7 @@ from src.super import Super
 from nirvana_utils import TrainerNirvana, copy_out_to_snapshot, copy_snapshot_to_out
 
 from SIFT.sift import SIFT
+from dense_plus_sparse_linear import get_dense_plus_sparse_model, get_sparse_dense_model_state_dict
 
 def train(
         # model/data params
@@ -87,7 +88,7 @@ def train(
         adapter_dropout: float = 0.0,
         use_parallel_adapter: bool = False,
         use_adapterp: bool = False,
-        target_modules: List[str] = None,
+        target_modules: List[str] = ["q_proj", "k_proj", "v_proj", "up_proj", "down_proj"],
         scaling: Union[float, str] = 1.0,
         # prefix tuning hyperparams
         num_virtual_tokens: int = 30,
@@ -103,7 +104,7 @@ def train(
         # torch_compile
         compile=False,
         attn_implementation="sdpa",
-        
+
         # optimizer hyperparams
         optimizer_name: str = "adam",
 
@@ -195,7 +196,7 @@ def train(
         model = AutoModelForCausalLM.from_pretrained(
             base_model,
             load_in_8bit=False,
-            # torch_dtype=torch.float16,
+            torch_dtype=torch.float16 if adapter_name != "sift" else torch.float32,
             device_map={"": int(os.environ.get("LOCAL_RANK", 0))},
             trust_remote_code=True,
             attn_implementation=attn_implementation
@@ -307,14 +308,25 @@ def train(
         )
     elif adapter_name == "super":
         model.seqlen = model.config.max_position_embeddings
-        sift = Super(
+        # sift = Super(
+        #     model, 
+        #     tokenizer,
+        #     outliers_ratio=sparse_rate,
+        #     sparse_module=sparse_module,
+        #     exception=sparse_exception,
+        #     grad_acc=gradient_accumulation_steps,
+        # )
+        model = get_dense_plus_sparse_model(
             model, 
-            tokenizer,
-            outliers_ratio=sparse_rate,
-            sparse_module=sparse_module,
+            target_modules_list=target_modules,
+            sparse_rate=sparse_rate,
+            indices_choice="random" if random_indices else "super",
+            tokenizer=tokenizer,
             exception=sparse_exception,
-            grad_acc=gradient_accumulation_steps,
         )
+        print('\n'*3)
+        print(model)
+        print('\n'*3)
     elif adapter_name == "no":
         pass
     else:
@@ -395,7 +407,7 @@ def train(
         for name, p in model.named_parameters():
             if p.requires_grad:
                 print(name)
-        ddp_find_unused_parameters=False if ddp and adapter_name not in ["sift", "super"] else True
+        ddp_find_unused_parameters=False if ddp and adapter_name not in ["sift"] else True
     trainer = TrainerNirvana(
         model=model,
         train_dataset=train_data,
@@ -418,7 +430,7 @@ def train(
             output_dir=output_dir,
             save_total_limit=1,
             load_best_model_at_end=True if val_set_size > 0 else False,
-            ddp_find_unused_parameters=False if ddp and adapter_name not in ["sift", "super"] else None,
+            ddp_find_unused_parameters=False if ddp and adapter_name not in ["sift"] else None,
             group_by_length=group_by_length,
             report_to="wandb" if use_wandb else "none",
             run_name=wandb_run_name if use_wandb else None,
@@ -430,15 +442,18 @@ def train(
             tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True
         ),
     )
-    if adapter_name in ["sift", "super"]:
+    if adapter_name in ["sift"]:
         sift.print_trainable_parameters()
         sift.set_trainer(trainer)
     model.config.use_cache = False
 
+    # if adapter_name not in ["sift"]:
+    # TODO load only adapter
     if adapter_name not in ["sift", "super"]:
         old_state_dict = model.state_dict
+        get_state_dict_func = get_sparse_dense_model_state_dict if adapter_name == "super" else get_peft_model_state_dict
         model.state_dict = (
-            lambda self, *_, **__: get_peft_model_state_dict(
+            lambda self, *_, **__: get_state_dict_func(
                 self, old_state_dict()
             )
         ).__get__(model, type(model))
