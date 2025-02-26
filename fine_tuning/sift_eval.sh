@@ -1,76 +1,23 @@
-export HF_HOME=/mnt/LLM
-export OMP_NUM_THREADS=8
+mkdir ./result/model_super -p
 
-mkdir ./result/test_1b_model_sift -p
-
-CUDA_VISIBLE_DEVICES=0 python commonsense_evaluate.py \
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
+export CUDA_VISIBLE_DEVICES=2
+python commonsense_evaluate.py \
     --model LLaMA-7B \
-    --adapter no \
+    --adapter super \
     --dataset boolq \
     --batch_size 1 \
-    --base_model 'meta-llama/Llama-3.2-1B' \
+    --base_model 'unsloth/Llama-3.2-1B' \
+    --sparse_rate 0.01171875 \
     --debug \
-    --lora_weights './trained_models/llama-sift' | tee -a './result/test_1b_model_sift/boolq.txt'
+    --lora_weights './trained_models/llama-super' | tee -a './result/model_super/boolq.txt'
 
-CUDA_VISIBLE_DEVICES=0 python commonsense_evaluate.py \
+python commonsense_evaluate.py \
     --model LLaMA-7B \
-    --adapter no \
+    --adapter super \
     --dataset piqa \
     --batch_size 1 \
-    --base_model 'meta-llama/Llama-3.2-1B' \
+    --base_model 'unsloth/Llama-3.2-1B' \
+    --sparse_rate 0.01171875 \
     --debug \
-    --lora_weights './trained_models/llama-sift' | tee -a './result/test_1b_model_sift/piqa.txt'
-
-CUDA_VISIBLE_DEVICES=0 python commonsense_evaluate.py \
-    --model LLaMA-7B \
-    --adapter no \
-    --dataset social_i_qa \
-    --batch_size 1 \
-    --base_model 'meta-llama/Llama-3.2-1B' \
-    --debug \
-    --lora_weights './trained_models/llama-sift' | tee -a './result/test_1b_model_sift/social_i_qa.txt'
-
-CUDA_VISIBLE_DEVICES=0 python commonsense_evaluate.py \
-    --model LLaMA-7B \
-    --adapter no \
-    --dataset hellaswag \
-    --batch_size 1 \
-    --base_model 'meta-llama/Llama-3.2-1B' \
-    --debug \
-    --lora_weights './trained_models/llama-sift' | tee -a './result/test_1b_model_sift/hellaswag.txt'
-
-CUDA_VISIBLE_DEVICES=0 python commonsense_evaluate.py \
-    --model LLaMA-7B \
-    --adapter no \
-    --dataset winogrande \
-    --batch_size 1 \
-    --base_model 'meta-llama/Llama-3.2-1B' \
-    --debug \
-    --lora_weights './trained_models/llama-sift' | tee -a './result/test_1b_model_sift/winogrande.txt'
-
-CUDA_VISIBLE_DEVICES=0 python commonsense_evaluate.py \
-    --model LLaMA-7B \
-    --adapter no \
-    --dataset ARC-Easy \
-    --batch_size 1 \
-    --base_model 'meta-llama/Llama-3.2-1B' \
-    --debug \
-    --lora_weights './trained_models/llama-sift' | tee -a './result/test_1b_model_sift/ARC-Easy.txt'
-
-CUDA_VISIBLE_DEVICES=0 python commonsense_evaluate.py \
-    --model LLaMA-7B \
-    --adapter no \
-    --dataset ARC-Challenge \
-    --batch_size 1 \
-    --base_model 'meta-llama/Llama-3.2-1B' \
-    --debug \
-    --lora_weights './trained_models/llama-sift' | tee -a './result/test_1b_model_sift/ARC-Challenge.txt'
-
-CUDA_VISIBLE_DEVICES=0 python commonsense_evaluate.py \
-    --model LLaMA-7B \
-    --adapter no \
-    --dataset openbookqa \
-    --batch_size 1 \
-    --base_model 'meta-llama/Llama-3.2-1B' \
-    --debug \
-    --lora_weights './trained_models/llama-sift' | tee -a './result/test_1b_model_sift/openbookqa.txt'
+    --lora_weights './trained_models/llama-super' | tee -a './result/model_super/piqa.txt'

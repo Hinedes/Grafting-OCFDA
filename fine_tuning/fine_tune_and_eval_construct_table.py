@@ -1,0 +1,188 @@
+import os
+import pickle
+
+import pandas as pd
+import torch
+import argparse
+
+import random
+import numpy as np
+
+from importlib.metadata import version
+
+from finetune import train
+from evaluate import eval_model
+
+
+def get_lists():
+    #models = ['meta-llama/Llama-3.2-1B', 'meta-llama/Llama-3.2-3B', 'meta-llama/Llama-3.1-8B']
+    models = ['meta-llama/Llama-3.2-1B']
+    lrs = [5e-5, 1e-4, 2e-4]
+    adapters = ['lora', 'sift-rand', 'sift-topk', 'super-rand', 'super-wanda']
+    datasets = ['AddSub', 'MultiArith', 'SingleEq', 'gsm8k', 'AQuA', 'SVAMP']
+
+    return models, lrs, adapters, datasets
+
+
+def create_initial_eval_table():
+    models, lrs, adapters, datasets = get_lists()
+
+    datasets.append('Average')
+
+    # Create a MultiIndex for rows with sparsities, methods, and tasks
+    index = pd.MultiIndex.from_product([lrs, models, adapters], names=['lr', 'Model', 'Adapter'])
+
+    # Create an empty DataFrame with sparsities, methods, and tasks as rows and models as columns
+    df = pd.DataFrame(index=index, columns=datasets)
+
+    return df
+
+
+def create_initial_eval_avg_table():
+    models, lrs, adapters, _ = get_lists()
+
+    # Create a MultiIndex for rows with methods and sparsities
+    index = pd.MultiIndex.from_product([lrs, adapters], names=['lr', 'Adapter'])
+
+    # Create an empty DataFrame with methods and sparsities as rows and models as columns
+    df = pd.DataFrame(index=index, columns=models)
+
+    return df
+
+
+def print_latex_table(df):
+    model_short_names = {
+        'meta-llama/Llama-3.2-1B': 'Llama-3-1B',
+        'meta-llama/Llama-3.2-3B': 'Llama-3-3B',
+        'meta-llama/Meta-Llama-3-8B': 'Llama-3-8B',
+    }
+
+    # Replace model names if they exist in the DataFrame columns or index
+    df.columns = [model_short_names.get(col, col) for col in df.columns]
+    if 'Model' in df.index.names:
+        df.index = df.index.set_levels([
+            [model_short_names.get(level, level) if name == 'Model' else level for level in
+             df.index.levels[idx]]
+            for idx, name in enumerate(df.index.names)
+        ])
+
+    latex_table = df.applymap(lambda x: f"{x:.2f}" if pd.notnull(x) else x).to_latex(escape=False)
+    print(latex_table)
+
+
+def save_table(df, filename, dir="out"):
+    if not os.path.exists(dir):
+        os.makedirs(dir)
+    save_filepath = os.path.join(dir, f"{filename}.pkl")
+    with open(save_filepath, 'wb') as f:
+        pickle.dump(df, f)
+
+
+def load_table(filename, dir="out"):
+    load_filepath = os.path.join(dir, f"{filename}.pkl")
+
+    if os.path.exists(load_filepath):
+        with open(load_filepath, 'rb') as f:
+            df = pickle.load(f)
+        return df
+    return None
+
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.random.manual_seed(seed)
+
+
+def construct_table(seed, cuda_visible_devices):
+    if cuda_visible_devices != 'all':
+        os.environ["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices
+
+    print("CUDA Available:", torch.cuda.is_available())
+    for __i in range(torch.cuda.device_count()):
+        print(f"GPU {__i}: {torch.cuda.get_device_name(__i)}")
+
+    print('torch', version('torch'))
+    print('transformers', version('transformers'))
+    print('accelerate', version('accelerate'))
+    print('# of gpus: ', torch.cuda.device_count())
+
+    models, lrs, adapters, datasets = get_lists()
+
+    sparse_rate = 0.013392857142857142  # TODO: compute this base on the size of the model
+    target_modules = ["q_proj", "k_proj", "v_proj", "up_proj", "down_proj"]
+    data_path = 'ft-training_set/math_10k.json'
+
+    eval_table = load_table("eval_table")
+    eval_avg_table = load_table("eval_avg_table")
+    if eval_table is None:
+        eval_table = create_initial_eval_table()
+    if eval_avg_table is None:
+        eval_avg_table = create_initial_eval_avg_table()
+
+    for model_name in models:
+        for lr in lrs:
+            for adapter in adapters:
+
+                set_seed(seed)
+
+                print("Model: " + model_name + " lr = " + str(lr) + " adapter: " + adapter)
+                if pd.notna(eval_avg_table.loc[(lr, adapter), model_name]):
+                    print("Already computed...")
+                    continue
+
+                model_out_dir = './trained_models/' + model_name.replace("/", "_") + "/lr=" + str(lr) + '/' + adapter
+
+                # If the directory already exists - then we do not need to retrain with the same parameters
+                if not os.path.isdir(model_out_dir):
+                    train(base_model=model_name, data_path=data_path, output_dir=model_out_dir,
+                          save_step=1000, eval_step=1000, batch_size=16,
+                          micro_batch_size=16, num_epochs=3, learning_rate=lr,
+                          cutoff_len=256, val_set_size=120, compile=0, seed=seed,
+                          sparse_rate=sparse_rate, adapter_name=adapter.split('-', 1)[0], random_indices='rand' in adapter)
+
+                name_to_acc = {task: 0 for task in datasets}
+
+                for dataset in datasets:
+
+                    # This is just to support arguments for eval.py:
+                    eval_adapter = 'no'
+                    if 'super' in adapter:
+                        eval_adapter = 'super'
+                    if adapter == 'lora':
+                        eval_adapter = 'LoRA'
+
+                    short_model_name = model_name.split('/', 1)[-1]
+
+                    accuracy = eval_model(dataset_name=dataset, model_name=short_model_name, adapter=eval_adapter,
+                                          base_model=model_name, lora_weights=model_out_dir, load_8bit=False,
+                                          debug=False, target_modules=target_modules, sparse_rate=sparse_rate) * 100
+                    print(dataset + " accuracy: " + str(accuracy) + "%")
+
+                    name_to_acc[dataset] = accuracy
+                    eval_table.loc[(lr, model_name, adapter), dataset] = accuracy
+
+                average_score = sum(name_to_acc.values()) / len(name_to_acc)
+                eval_table.loc[(lr, model_name, adapter), 'Average'] = average_score
+                eval_avg_table.loc[(lr, adapter), model_name] = average_score
+
+                save_table(eval_table, filename="eval_table")
+                save_table(eval_avg_table, filename="eval_avg_table")
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument("--cuda_visible_devices", default="0", type=str, help="In case you want to select particular "
+                                                                              "GPUs")
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = parse_args()
+
+    eval_table = load_table("eval_table")
+    eval_avg_table = load_table("eval_avg_table")
+    print_latex_table(eval_table)
+
+    #construct_table(args.seed, args.cuda_visible_devices)

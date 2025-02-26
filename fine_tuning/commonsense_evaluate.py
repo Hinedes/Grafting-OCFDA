@@ -18,6 +18,8 @@ import re
 import sys
 import argparse
 
+import wandb
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PEFT_PATH = os.path.abspath(os.path.join(os.getcwd(), "peft/src/"))
 sys.path.insert(0, PEFT_PATH)
@@ -78,13 +80,16 @@ def main(
             **kwargs,
         )
         with torch.no_grad():
-            generation_output = model.generate(
-                input_ids=input_ids,
-                generation_config=generation_config,
-                return_dict_in_generate=True,
-                output_scores=True,
-                max_new_tokens=max_new_tokens,
-            )
+
+            # TODO change `dense_plus_sparse_linear` so that it can work without autocast
+            with torch.autocast(device_type="cuda", dtype=torch.float16):
+                generation_output = model.generate(
+                    input_ids=input_ids,
+                    generation_config=generation_config,
+                    return_dict_in_generate=True,
+                    output_scores=True,
+                    max_new_tokens=max_new_tokens,
+                )
         s = generation_output.sequences
         outputs = tokenizer.batch_decode(s, skip_special_tokens=True)
         outputs = [o.split("### Response:")[1].strip() for o in outputs]
@@ -133,6 +138,18 @@ def main(
             json.dump(output_data, f, indent=4)
         pbar.update(1)
     pbar.close()
+    if not int(os.environ.get("LOCAL_RANK", 0)):
+        with open(os.path.join(args.lora_weights, "run_metadata.json"), 'r') as f:
+            run_metadata = json.load(f)
+        wandb.init(
+            project=run_metadata["project"],
+            id=run_metadata["run_id"],
+            name=run_metadata.get("run_name"),
+            entity=run_metadata.get("entity"),
+            resume="must"
+        )
+        print(f"Resumed run: {wandb.run.name} (ID: {wandb.run.id})")
+    wandb.log({f"{args.dataset}-accuracy": correct / current * 100})
     print('\n')
     print('test finished')
 
@@ -194,7 +211,7 @@ def parse_args():
     parser.add_argument('--dataset', choices=["boolq", "piqa", "social_i_qa", "hellaswag", "winogrande", "ARC-Challenge", "ARC-Easy", "openbookqa"],
                         required=True)
     parser.add_argument('--model', choices=['LLaMA-7B', "LLaMA-13B",'BLOOM-7B', 'GPT-j-6B', 'LLaMA-3-8B', 'LLaMA-3.1-8B', 'LLaMA-3.2-1B'], required=True)
-    parser.add_argument('--adapter', choices=['LoRA', 'AdapterP', 'AdapterH', 'Parallel', 'no', 'orig'],
+    parser.add_argument('--adapter', choices=['LoRA', 'AdapterP', 'AdapterH', 'Parallel', 'no', 'orig', 'super'],
                         required=True)
     parser.add_argument('--base_model', required=True)
     parser.add_argument('--lora_weights', required=True)
@@ -202,6 +219,10 @@ def parse_args():
     parser.add_argument('--load_8bit', action='store_true', default=False)
 
     parser.add_argument('--debug', action='store_true', default=False)
+
+    # TODO rewrite it so that one don't have to pass these args
+    parser.add_argument('--target_modules', nargs='+', default=["q_proj", "k_proj", "v_proj", "up_proj", "down_proj"])
+    parser.add_argument('--sparse_rate', type=float, default=0.01171875)
 
     return parser.parse_args()
 
@@ -240,13 +261,53 @@ def load_model(args) -> tuple:
                 device_map="auto",
                 trust_remote_code=True,
             ) # fix zwq
-            if args.adapter != "orig":
+            if args.adapter not in ["orig", "super"]:
                 model = PeftModel.from_pretrained(
                     model,
                     lora_weights,
                     torch_dtype=torch.float16,
                     device_map={"":0}
                 )
+            elif args.adapter == "super":
+
+                # TODO rewrite, for now it is just copypaste from `finetune.py`
+                # (requires the same input arguments as training)
+                from dense_plus_sparse_linear import get_dense_plus_sparse_model
+                from safetensors.torch import load_file
+                import glob
+                print(model)
+                model = get_dense_plus_sparse_model(
+                    model, 
+                    target_modules_list=args.target_modules,
+                    sparse_rate=args.sparse_rate,
+                    indices_choice="random",
+                )
+                print(model)
+                def load_safetensors_model(model_path):
+                    if os.path.isfile(f"{model_path}"):
+                        state_dict = load_file(f"{model_path}")
+                        return state_dict
+
+                    pattern = os.path.join(os.path.dirname(model_path), "model-*-of-*.safetensors")
+                    print('\n'*3)
+                    print(pattern)
+                    print('\n'*3)
+                    shard_files = sorted(glob.glob(pattern))
+                    if not shard_files:
+                        raise FileNotFoundError(f"No safetensors file or shards found for base path: {model_path}")
+                    
+                    print(f"Found {len(shard_files)} shard files:")
+                    for shard in shard_files:
+                        print("  ", shard)
+                    
+                    state_dict = {}
+                    for shard in shard_files:
+                        shard_state = load_file(shard)
+                        state_dict.update(shard_state)
+                    
+                    return state_dict
+                state_dict = load_safetensors_model(f"{lora_weights}/model.safetensors")
+                model.load_state_dict(state_dict, strict=False)
         else:
             model = AutoModelForCausalLM.from_pretrained(
                 lora_weights,
@@ -256,7 +317,6 @@ def load_model(args) -> tuple:
                 device_map="auto",
                 trust_remote_code=True,
             )
-            # load_model(model, os.path.join(lora_weights, "model.safetensors"))
     elif device == "mps":
         model = AutoModelForCausalLM.from_pretrained(
             base_model,

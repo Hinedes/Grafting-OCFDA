@@ -4,13 +4,14 @@ import math
 
 from src.mask import prepare_super_mask
 
-class dense_plus_sparse_linear(torch.autograd.Function):
+
+class DensePlusSparseLinear(torch.autograd.Function):
     @staticmethod
     @torch.amp.custom_fwd(device_type="cuda")
     def forward(ctx, input, weight, indices, values, bias=None):
         ctx.save_for_backward(input, weight, indices, values, bias)
         
-        dense_plus_sparse = weight.view(-1).scatter_add(0, indices.to(torch.int64), values)
+        dense_plus_sparse = weight.view(-1).scatter_add(0, indices.to(torch.int64), values.to(weight.dtype))
         dense_plus_sparse = dense_plus_sparse.view_as(weight)
 
         return torch.nn.functional.linear(input, dense_plus_sparse, bias)
@@ -47,3 +48,65 @@ class dense_plus_sparse_linear(torch.autograd.Function):
 
         return grad_input, grad_weight, grad_indices, grad_values, grad_bias
 
+
+class SparseDenseLinear(nn.Module):
+    def __init__(self, base_layer, sparse_rate: float, indices=None):
+        super().__init__()
+        assert 0.0 <= sparse_rate <= 1.0, "sparse_rate shoud be a ratio between 0 and 1"
+        self.weight = base_layer.weight
+        self.bias = base_layer.bias
+        self.num_elements = self.weight.numel()
+        self.num_nonzero = int(self.weight.numel() * (sparse_rate))
+        self.sparse_rate = sparse_rate
+
+        if getattr(base_layer, "state", None) is not None:
+            self.state = base_layer.state
+
+        if indices is None:
+            # indices = torch.randperm(self.num_elements-1)
+            indices = torch.randint(0, self.num_elements, (self.num_nonzero,))
+        indices = indices.to(dtype=torch.int32, device=self.weight.device)[:self.num_nonzero]
+        
+        self.values = nn.Parameter(
+            torch.zeros(self.num_nonzero, dtype=torch.float32, device=self.weight.device)
+        )
+        self.register_buffer('indices', indices)
+        
+    def forward(self, input):
+        return DensePlusSparseLinear.apply(input, self.weight, self.indices, self.values, self.bias)
+    
+
+def get_dense_plus_sparse_model(model, target_modules_list, sparse_rate=0.01, indices_choice="random", tokenizer=None, exception=[]):
+    if indices_choice == "super":
+        assert tokenizer is not None, "`Super` option requires tokenizer to determine outliers indices."
+        prepare_super_mask(model, tokenizer, dev=model.device, outliers_ratio=sparse_rate)
+
+    def _get_submodules(key):
+        parent = model.get_submodule(".".join(key.split(".")[:-1]))
+        target_name = key.split(".")[-1]
+        target = model.get_submodule(key)
+        return parent, target, target_name
+
+    def _replace_module(parent_module, child_name, old_module):
+        indices = getattr(old_module.weight, "wanda_topk_indices", None)
+        new_module = SparseDenseLinear(old_module, sparse_rate=sparse_rate, indices=indices)
+        setattr(parent_module, child_name, new_module)
+
+    for module_name, _ in model.named_modules():
+        if not any(module_name.endswith(target_key) for target_key in target_modules_list):
+            continue
+        
+        parent, target, target_name = _get_submodules(module_name)
+        _replace_module(parent, target_name, target)
+    
+    for name, p in model.named_parameters():
+        if not ("values" in name or any([item in name for item in exception])):
+            p.requires_grad_(False)
+    
+    return model
+
+
+def get_sparse_dense_model_state_dict(model, state_dict=None):
+    if state_dict is None:
+        state_dict = model.state_dict()
+    return {k: state_dict[k] for k in state_dict if "values" in k or "indices" in k}
