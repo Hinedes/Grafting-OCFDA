@@ -105,7 +105,7 @@ def train(
         # torch_compile
         compile=False,
         attn_implementation="sdpa",
-        
+
         # optimizer hyperparams
         optimizer_name: str = "adam",
 
@@ -470,13 +470,17 @@ def train(
         if (not int(os.environ.get("LOCAL_RANK", 0)) 
             and use_wandb):
             import wandb
-            with open(os.path.join(output_dir, "run_id.txt"), 'r') as f:
-                run_id = f.readline()
-                print(run_id, '\n'*5)
-                wandb.init(
-                    id=run_id,
-                    resume=True,
-                )
+            import json
+            with open(os.path.join(output_dir, "run_metadata.json"), 'r') as f:
+                run_metadata = json.load(f)
+            wandb.init(
+                project=run_metadata["project"],
+                id=run_metadata["run_id"],
+                name=run_metadata.get("run_name"),
+                entity=run_metadata.get("entity"),
+                resume="must"
+            )
+            print(f"Resumed run: {wandb.run.name} (ID: {wandb.run.id})")
 
     trainer.train(resume_from_checkpoint=checkpoint)
 

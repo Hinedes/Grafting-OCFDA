@@ -18,6 +18,8 @@ import re
 import sys
 import argparse
 
+import wandb
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PEFT_PATH = os.path.abspath(os.path.join(os.getcwd(), "peft/src/"))
 sys.path.insert(0, PEFT_PATH)
@@ -136,6 +138,18 @@ def main(
             json.dump(output_data, f, indent=4)
         pbar.update(1)
     pbar.close()
+    if not int(os.environ.get("LOCAL_RANK", 0)):
+        with open(os.path.join(args.lora_weights, "run_metadata.json"), 'r') as f:
+            run_metadata = json.load(f)
+        wandb.init(
+            project=run_metadata["project"],
+            id=run_metadata["run_id"],
+            name=run_metadata.get("run_name"),
+            entity=run_metadata.get("entity"),
+            resume="must"
+        )
+        print(f"Resumed run: {wandb.run.name} (ID: {wandb.run.id})")
+    wandb.log({f"{args.dataset}-accuracy": correct / current * 100})
     print('\n')
     print('test finished')
 

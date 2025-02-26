@@ -7,6 +7,7 @@ except ImportError:
 import os
 import transformers
 import wandb
+import json
 
 def copy_snapshot_to_out(out):
     """ The preempted run transfers its "state" to the restarted run through "snapshot path".
@@ -94,9 +95,14 @@ class TrainerNirvana(transformers.Trainer):
         super()._save_checkpoint(*args, **kwargs)
         if self.is_local_process_zero() if self.args.save_on_each_node else self.is_world_process_zero():
             if 'wandb' in self.args.report_to:
-                with open (f'{self.args.output_dir}/run_id.txt', 'w') as f:
-                    f.write(f'{wandb.run.id}')
+                run_metadata = {
+                    "project": wandb.run.project,
+                    "run_id": wandb.run.id,
+                    "run_name": wandb.run.name,
+                    "entity": wandb.run.entity,
+                }
+                with open(os.path.join(self.args.output_dir, "run_metadata.json"), 'w') as f:
+                    json.dump(run_metadata, f)
+                print("Run metadata saved.")
                 os.system(f"ls {self.args.output_dir}")
-                print('\n'*5)
-                    
             copy_out_to_snapshot(self.args.output_dir)
