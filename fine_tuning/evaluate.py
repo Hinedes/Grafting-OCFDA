@@ -26,14 +26,7 @@ except:  # noqa: E722
     pass
 
 
-def main(
-        load_8bit: bool = False,
-        base_model: str = "",
-        lora_weights: str = "tloen/alpaca-lora-7b",
-        share_gradio: bool = False,
-):
-    args = parse_args()
-
+def eval_model(dataset_name, model_name, adapter, base_model, lora_weights, load_8bit, debug, target_modules, sparse_rate) -> float:
     def evaluate(
             instruction,
             input=None,
@@ -84,31 +77,35 @@ def main(
         print("Response:", evaluate(instruction))
         print()
     """
-    save_file = f'experiment/{args.model}-{args.adapter}-{args.dataset}.json'
+    save_file = f'experiment/{model_name}-{adapter}-{dataset_name}.json'
     create_dir('experiment/')
 
-    dataset = load_data(args)
-    tokenizer, model = load_model(args)
+    dataset = load_data(dataset_name)
+    tokenizer, model = load_model(base_model, model_name, lora_weights, load_8bit, adapter, target_modules, sparse_rate)
+
     total = len(dataset)
     correct = 0
     miss = 0.001
     output_data = []
     pbar = tqdm(total=total)
+
+    accuracy = 0.0
+
     for idx, data in enumerate(dataset):
         instruction = data.get('instruction')
 
         outputs = evaluate(instruction)
         label = data.get('answer')
         flag = False
-        if args.dataset.lower() in ['aqua']:
-            predict = extract_answer_letter(args, outputs)
+        if dataset_name.lower() in ['aqua']:
+            predict = extract_answer_letter(outputs)
             if label == predict:
                 correct += 1
                 flag = True
         else:
             if isinstance(label, str):
                 label = float(label)
-            predict = extract_answer_number(args, outputs)
+            predict = extract_answer_number(dataset_name, outputs)
             if abs(label - predict) <= miss:
                 correct += 1
                 flag = True
@@ -123,13 +120,18 @@ def main(
         print('prediction:', predict)
         print('label:', label)
         print('---------------')
-        print(f'\rtest:{idx + 1}/{total} | accuracy {correct}  {correct / (idx + 1)}')
+
+        accuracy = correct / (idx + 1)
+
+        print(f'\rtest:{idx + 1}/{total} | accuracy {correct}  {accuracy}')
         with open(save_file, 'w+') as f:
             json.dump(output_data, f, indent=4)
         pbar.update(1)
     pbar.close()
     print('\n')
     print('test finished')
+
+    return accuracy
 
 
 def create_dir(dir_path):
@@ -160,16 +162,16 @@ def generate_prompt(instruction, input=None):
                 """  # noqa: E501
 
 
-def load_data(args) -> list:
+def load_data(dataset) -> list:
     """
     read data from dataset file
     Args:
-        args:
+        dataset:
 
-    Returns:
+    Returns: list
 
     """
-    file_path = f'dataset/{args.dataset}/test.json'
+    file_path = f'dataset/{dataset}/test.json'
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"can not find dataset file : {file_path}")
     json_data = json.load(open(file_path, 'r'))
@@ -180,7 +182,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', choices=['AddSub', 'MultiArith', 'SingleEq', 'gsm8k', 'AQuA', 'SVAMP'],
                         required=True)
-    parser.add_argument('--model', choices=['LLaMA-7B', "LLaMA-13B",'BLOOM-7B', 'GPT-j-6B', 'LLaMA-3-8B', 'LLaMA-3.1-8B', 'LLaMA-3.2-1B'], required=True)
+    parser.add_argument('--model_name', choices=['LLaMA-7B', "LLaMA-13B",'BLOOM-7B', 'GPT-j-6B', 'LLaMA-3-8B', 'LLaMA-3.1-8B', 'LLaMA-3.2-1B'], required=True)
     parser.add_argument('--adapter', choices=['LoRA', 'AdapterP', 'AdapterH', 'Parallel', 'no', 'orig', 'super'],
                         required=True)
     parser.add_argument('--base_model', required=True)
@@ -196,23 +198,20 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_model(args) -> tuple:
+def load_model(base_model, model_name, lora_weights, load_8bit, adapter, target_modules, sparse_rate) -> tuple:
     """
     load tuned model
     Args:
-        args:
+        base_model, model_name, lora_weights, load_8bit, adapter, target_modules, sparse_rate
 
     Returns:
         tuple(tokenizer, model)
     """
-    base_model = args.base_model
     if not base_model:
-        raise ValueError(f'can not find base model name by the value: {args.model}')
-    lora_weights = args.lora_weights
+        raise ValueError(f'can not find base model name by the value: {model_name}')
     if not lora_weights:
         raise ValueError(f'can not find lora weight, the value is: {lora_weights}')
 
-    load_8bit = args.load_8bit
     # if "LLaMA" in args.model:
     #     tokenizer = LlamaTokenizer.from_pretrained(base_model)
     # else:
@@ -222,7 +221,7 @@ def load_model(args) -> tuple:
         0  # unk. we want this to be different from the eos token
     )
     if device == "cuda":
-        if args.adapter != "no":
+        if adapter != "no":
             model = AutoModelForCausalLM.from_pretrained(
                 base_model,
                 load_in_8bit=load_8bit,
@@ -230,14 +229,14 @@ def load_model(args) -> tuple:
                 device_map="auto",
                 trust_remote_code=True,
             )  # fix zwq
-            if args.adapter not in ["orig", "super"]:
+            if adapter not in ["orig", "super"]:
                 model = PeftModel.from_pretrained(
                     model,
                     lora_weights,
                     torch_dtype=torch.float16,
                     device_map={"": 0}
                 )
-            elif args.adapter == "super":
+            elif adapter == "super":
 
                 # TODO rewrite, for now it is just copypaste from `finetune.py`
                 # (requires the same input arguments as training)
@@ -247,8 +246,8 @@ def load_model(args) -> tuple:
                 print(model)
                 model = get_dense_plus_sparse_model(
                     model,
-                    target_modules_list=args.target_modules,
-                    sparse_rate=args.sparse_rate,
+                    target_modules_list=target_modules,
+                    sparse_rate=sparse_rate,
                     indices_choice="random",
                 )
                 print(model)
@@ -325,7 +324,6 @@ def load_model(args) -> tuple:
     return tokenizer, model
 
 
-
 def load_instruction(args) -> str:
     instruction = ''
     if not instruction:
@@ -333,16 +331,15 @@ def load_instruction(args) -> str:
     return instruction
 
 
-def extract_answer_number(args, sentence: str) -> float:
-    dataset = args.dataset.lower()
-    if dataset in ["multiarith", "addsub", "singleeq", "gsm8k", "svamp"]:
+def extract_answer_number(dataset_name, sentence: str) -> float:
+    if dataset_name.lower() in ["multiarith", "addsub", "singleeq", "gsm8k", "svamp"]:
         sentence = sentence.replace(',', '')
         pred = [s for s in re.findall(r'-?\d+\.?\d*', sentence)]
         if not pred:
             return float('inf')
         pred_answer = float(pred[-1])
     else:
-        raise NotImplementedError(' not support dataset: {}'.format(dataset))
+        raise NotImplementedError(' not support dataset: {}'.format(dataset_name))
     if isinstance(pred_answer, str):
         try:
             pred_answer = float(pred_answer)
@@ -351,7 +348,7 @@ def extract_answer_number(args, sentence: str) -> float:
     return pred_answer
 
 
-def extract_answer_letter(args, sentence: str) -> str:
+def extract_answer_letter(sentence: str) -> str:
     sentence_ = sentence.strip()
     pred_answers = re.findall(r'A|B|C|D|E', sentence_)
     if pred_answers:
@@ -363,4 +360,6 @@ def extract_answer_letter(args, sentence: str) -> str:
 
 
 if __name__ == "__main__":
-    fire.Fire(main)
+    args = parse_args()
+
+    eval_model(args.dataset, args.model_name, args.adapter, args.base_model, args.lora_weights, args.load_8bit, args.debug, args.target_modules, args.sparse_rate)

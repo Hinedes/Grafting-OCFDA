@@ -57,6 +57,7 @@ from nirvana_utils import TrainerNirvana, copy_out_to_snapshot, copy_snapshot_to
 from SIFT.sift import SIFT
 from dense_plus_sparse_linear import get_dense_plus_sparse_model, get_sparse_dense_model_state_dict
 
+
 def train(
         # model/data params
         base_model: str = "",  # the only required argument
