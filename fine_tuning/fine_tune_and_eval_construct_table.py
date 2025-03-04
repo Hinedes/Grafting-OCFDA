@@ -149,8 +149,6 @@ def construct_table(seed, cuda_visible_devices):
                     eval_adapter = 'no'
                     if 'super' in adapter:
                         eval_adapter = 'super'
-                    if adapter == 'lora':
-                        eval_adapter = 'LoRA'
 
                     short_model_name = model_name.split('/', 1)[-1]
 
