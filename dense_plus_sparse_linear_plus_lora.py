@@ -34,8 +34,8 @@ class SparseDenseLoraLinear(nn.Module):
         self.register_buffer('indices', indices)
 
         if r_lora > 0:
-            self.lora_A = nn.Linear(out_features, r_lora, bias=False)
-            self.lora_B = nn.Linear(r_lora, in_features, bias=False)
+            self.lora_A = nn.Linear(out_features, r_lora, bias=False, device=self.weight.device)
+            self.lora_B = nn.Linear(r_lora, in_features, bias=False, device=self.weight.device)
             self.scaling = lora_alpha / r_lora
             self.lora_dropout = nn.Dropout(p=lora_dropout) if lora_dropout > 0.0 else lambda x: x
             self.weight.requires_grad = False
@@ -109,4 +109,4 @@ def get_dense_plus_sparse_plus_lora_model(model,
 def get_sparse_dense_lora_model_state_dict(model, state_dict=None):
     if state_dict is None:
         state_dict = model.state_dict()
-    return {k: state_dict[k] for k in state_dict if "values" in k or "indices" in k}
+    return {k: state_dict[k] for k in state_dict if "values" in k or "indices" in k or "lora" in k}

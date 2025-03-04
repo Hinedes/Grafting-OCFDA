@@ -5,10 +5,12 @@ import importlib.util
 
 original_find_spec = importlib.util.find_spec
 
+
 def custom_find_spec(name, *args, **kwargs):
     if name == 'peft':
         return None
     return original_find_spec(name, *args, **kwargs)
+
 
 importlib.util.find_spec = custom_find_spec
 
@@ -58,7 +60,8 @@ from nirvana_utils import TrainerNirvana, copy_out_to_snapshot, copy_snapshot_to
 
 from SIFT.sift import SIFT
 from dense_plus_sparse_linear import get_dense_plus_sparse_model, get_sparse_dense_model_state_dict
-from dense_plus_sparse_linear_plus_lora import get_dense_plus_sparse_plus_lora_model, get_sparse_dense_lora_model_state_dict
+from dense_plus_sparse_linear_plus_lora import get_dense_plus_sparse_plus_lora_model, \
+    get_sparse_dense_lora_model_state_dict
 
 
 def train(
@@ -68,7 +71,7 @@ def train(
         output_dir: str = "./lora-alpaca",
         overwrite_output_dir: bool = False,
         adapter_name: str = "lora",
-        load_8bit : bool = False,
+        load_8bit: bool = False,
         # training hyperparams
         batch_size: int = 128,
         micro_batch_size: int = 4,
@@ -317,16 +320,16 @@ def train(
         #     grad_acc=gradient_accumulation_steps,
         # )
         model = get_dense_plus_sparse_model(
-            model, 
+            model,
             target_modules_list=target_modules,
             r=lora_r,
             indices_choice="random" if random_indices else "super",
             tokenizer=tokenizer,
             exception=sparse_exception,
         )
-        print('\n'*3)
+        print('\n' * 3)
         print(model)
-        print('\n'*3)
+        print('\n' * 3)
     elif adapter_name == "supra":
         model.seqlen = model.config.max_position_embeddings
         model = get_dense_plus_sparse_plus_lora_model(
@@ -368,7 +371,7 @@ def train(
 
     copy_snapshot_to_out(output_dir)
     last_checkpoint = None
-    if(load_from_checkpoints):
+    if (load_from_checkpoints):
         if os.path.isdir(output_dir) and not overwrite_output_dir:
             last_checkpoint = get_last_checkpoint(output_dir)
             if last_checkpoint is None and len(os.listdir(output_dir)) > 0:
@@ -433,9 +436,9 @@ def train(
 
         print("Total number of parameters:", total_params)
         print("Number of trainable params:", num_trainable)
-        print("Sparse_rate =", num_trainable/total_params)
+        print("Sparse_rate =", num_trainable / total_params)
 
-        ddp_find_unused_parameters=False if ddp and adapter_name not in ["sift"] else True
+        ddp_find_unused_parameters = False if ddp and adapter_name not in ["sift"] else True
     trainer = TrainerNirvana(
         model=model,
         train_dataset=train_data,
@@ -477,14 +480,20 @@ def train(
 
     # if adapter_name not in ["sift"]:
     # TODO load only adapter
-    if adapter_name not in ["sift", "super"]:
-        old_state_dict = model.state_dict
-        get_state_dict_func = get_sparse_dense_model_state_dict if adapter_name == "super" else get_peft_model_state_dict
-        model.state_dict = (
-            lambda self, *_, **__: get_state_dict_func(
-                self, old_state_dict()
-            )
-        ).__get__(model, type(model))
+    # if adapter_name not in ["sift", "super", "supra"]:
+
+    old_state_dict = model.state_dict
+    get_state_dict_func = get_peft_model_state_dict
+    if adapter_name == "super":
+        get_state_dict_func = get_sparse_dense_model_state_dict
+    elif adapter_name == "supra":
+        get_state_dict_func = get_sparse_dense_lora_model_state_dict
+
+    model.state_dict = (
+        lambda self, *_, **__: get_state_dict_func(
+            self, old_state_dict()
+        )
+    ).__get__(model, type(model))
 
     # if torch.__version__ >= "2" and sys.platform != "win32":
     #     model = torch.compile(model)
@@ -494,8 +503,8 @@ def train(
         checkpoint = resume_from_checkpoint
     elif last_checkpoint is not None:
         checkpoint = last_checkpoint
-        if (not int(os.environ.get("LOCAL_RANK", 0)) 
-            and use_wandb):
+        if (not int(os.environ.get("LOCAL_RANK", 0))
+                and use_wandb):
             import wandb
             import json
             with open(os.path.join(output_dir, "run_metadata.json"), 'r') as f:
@@ -517,12 +526,12 @@ def train(
 
         # # some yandex infrastructure logic
         # os.system(f"rm -rf {output_dir}/checkpoint*")
-        print('\n'*10)
+        print('\n' * 10)
         print("copying result to snapshot")
-        print('-'*20)
+        print('-' * 20)
         print("LS OUTPUT_DIR")
         os.system(f"ls {output_dir}")
-        print('-'*20)
+        print('-' * 20)
         copy_out_to_snapshot(output_dir)
 
     print(
@@ -542,7 +551,7 @@ def generate_prompt(data_point):
                 {data_point["input"]}
                 
                 ### Response:
-                {data_point["output"]}""" # noqa: E501
+                {data_point["output"]}"""  # noqa: E501
     else:
         return f"""Below is an instruction that describes a task. Write a response that appropriately completes the request.  
 
@@ -550,7 +559,7 @@ def generate_prompt(data_point):
                 {data_point["instruction"]}
                 
                 ### Response:
-                {data_point["output"]}""" # noqa: E501
+                {data_point["output"]}"""  # noqa: E501
 
 
 if __name__ == "__main__":

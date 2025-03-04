@@ -26,7 +26,7 @@ except:  # noqa: E722
     pass
 
 
-def eval_model(dataset_name, model_name, adapter, base_model, lora_weights, load_8bit, debug, target_modules, sparse_rate) -> float:
+def eval_model(dataset_name, model_name, adapter, base_model, lora_weights, load_8bit, debug, target_modules, r) -> float:
     def evaluate(
             instruction,
             input=None,
@@ -81,7 +81,7 @@ def eval_model(dataset_name, model_name, adapter, base_model, lora_weights, load
     create_dir('experiment/')
 
     dataset = load_data(dataset_name)
-    tokenizer, model = load_model(base_model, model_name, lora_weights, load_8bit, adapter, target_modules, sparse_rate)
+    tokenizer, model = load_model(base_model, model_name, lora_weights, load_8bit, adapter, target_modules, r)
 
     total = len(dataset)
     correct = 0
@@ -183,7 +183,7 @@ def parse_args():
     parser.add_argument('--dataset', choices=['AddSub', 'MultiArith', 'SingleEq', 'gsm8k', 'AQuA', 'SVAMP'],
                         required=True)
     parser.add_argument('--model_name', choices=['LLaMA-7B', "LLaMA-13B",'BLOOM-7B', 'GPT-j-6B', 'LLaMA-3-8B', 'LLaMA-3.1-8B', 'LLaMA-3.2-1B'], required=True)
-    parser.add_argument('--adapter', choices=['LoRA', 'AdapterP', 'AdapterH', 'Parallel', 'no', 'orig', 'super'],
+    parser.add_argument('--adapter', choices=['LoRA', 'AdapterP', 'AdapterH', 'Parallel', 'no', 'orig', 'super', 'supra'],
                         required=True)
     parser.add_argument('--base_model', required=True)
     parser.add_argument('--lora_weights', required=True)
@@ -193,12 +193,14 @@ def parse_args():
 
     # TODO rewrite it so that one don't have to pass these args
     parser.add_argument('--target_modules', nargs='+', default=["q_proj", "k_proj", "v_proj", "up_proj", "down_proj"])
-    parser.add_argument('--sparse_rate', type=float, default=0.013392857142857142)
+
+    parser.add_argument('--r', default=8)
+
 
     return parser.parse_args()
 
 
-def load_model(base_model, model_name, lora_weights, load_8bit, adapter, target_modules, sparse_rate) -> tuple:
+def load_model(base_model, model_name, lora_weights, load_8bit, adapter, target_modules, r) -> tuple:
     """
     load tuned model
     Args:
@@ -229,7 +231,7 @@ def load_model(base_model, model_name, lora_weights, load_8bit, adapter, target_
                 device_map="auto",
                 trust_remote_code=True,
             )  # fix zwq
-            if adapter not in ["orig", "super"]:
+            if adapter not in ["orig", "super", "supra"]:
                 model = PeftModel.from_pretrained(
                     model,
                     lora_weights,
@@ -237,7 +239,6 @@ def load_model(base_model, model_name, lora_weights, load_8bit, adapter, target_
                     device_map={"": 0}
                 )
             elif adapter == "super":
-
                 # TODO rewrite, for now it is just copypaste from `finetune.py`
                 # (requires the same input arguments as training)
                 from dense_plus_sparse_linear import get_dense_plus_sparse_model
@@ -247,7 +248,7 @@ def load_model(base_model, model_name, lora_weights, load_8bit, adapter, target_
                 model = get_dense_plus_sparse_model(
                     model,
                     target_modules_list=target_modules,
-                    sparse_rate=sparse_rate,
+                    r=r,
                     indices_choice="random",
                 )
                 print(model)
@@ -278,6 +279,47 @@ def load_model(base_model, model_name, lora_weights, load_8bit, adapter, target_
 
                 state_dict = load_safetensors_model(f"{lora_weights}/model.safetensors")
                 model.load_state_dict(state_dict, strict=False)
+            elif adapter == "supra":
+                from dense_plus_sparse_linear_plus_lora import get_dense_plus_sparse_plus_lora_model
+                from safetensors.torch import load_file
+                import glob
+                print(model)
+                model = get_dense_plus_sparse_plus_lora_model(
+                    model,
+                    target_modules_list=target_modules,
+                    r_lora=r//2,
+                    r_super=r//2,
+                    indices_choice="random",
+                )
+                print(model)
+
+                def load_safetensors_model(model_path):
+                    if os.path.isfile(f"{model_path}"):
+                        state_dict = load_file(f"{model_path}")
+                        return state_dict
+
+                    pattern = os.path.join(os.path.dirname(model_path), "model-*-of-*.safetensors")
+                    print('\n' * 3)
+                    print(pattern)
+                    print('\n' * 3)
+                    shard_files = sorted(glob.glob(pattern))
+                    if not shard_files:
+                        raise FileNotFoundError(f"No safetensors file or shards found for base path: {model_path}")
+
+                    print(f"Found {len(shard_files)} shard files:")
+                    for shard in shard_files:
+                        print("  ", shard)
+
+                    state_dict = {}
+                    for shard in shard_files:
+                        shard_state = load_file(shard)
+                        state_dict.update(shard_state)
+
+                    return state_dict
+
+                state_dict = load_safetensors_model(f"{lora_weights}/model.safetensors")
+                model.load_state_dict(state_dict, strict=False)
+
         else:
             model = AutoModelForCausalLM.from_pretrained(
                 lora_weights,
@@ -362,4 +404,4 @@ def extract_answer_letter(sentence: str) -> str:
 if __name__ == "__main__":
     args = parse_args()
 
-    eval_model(args.dataset, args.model_name, args.adapter, args.base_model, args.lora_weights, args.load_8bit, args.debug, args.target_modules, args.sparse_rate)
+    eval_model(args.dataset, args.model_name, args.adapter, args.base_model, args.lora_weights, args.load_8bit, args.debug, args.target_modules, args.r)
