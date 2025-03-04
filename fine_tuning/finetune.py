@@ -2,6 +2,7 @@
 # (for yandex infrastructure; in regular env one can just uninstall peft)
 
 import importlib.util
+
 original_find_spec = importlib.util.find_spec
 
 def custom_find_spec(name, *args, **kwargs):
@@ -21,6 +22,7 @@ import torch.nn as nn
 import transformers
 from datasets import load_dataset
 from typing import List, Optional, Union
+from importlib.metadata import version
 
 import sys
 import os
@@ -56,6 +58,7 @@ from nirvana_utils import TrainerNirvana, copy_out_to_snapshot, copy_snapshot_to
 
 from SIFT.sift import SIFT
 from dense_plus_sparse_linear import get_dense_plus_sparse_model, get_sparse_dense_model_state_dict
+from dense_plus_sparse_linear_plus_lora import get_dense_plus_sparse_plus_lora_model, get_sparse_dense_lora_model_state_dict
 
 
 def train(
@@ -75,6 +78,7 @@ def train(
         cutoff_len: int = 256,
         val_set_size: int = 2000,
         use_gradient_checkpointing: bool = False,
+        load_from_checkpoints: bool = False,
         eval_step: int = 200,
         save_step: int = 200,
         seed=0,
@@ -113,7 +117,6 @@ def train(
         max_steps=-1,
 
         # SIFT params
-        sparse_rate=0.001,
         sparse_exception=[],
         random_indices=False,
 ):
@@ -156,7 +159,6 @@ def train(
         f"attn_implementation: {attn_implementation}\n"
         f"optimizer_name: {optimizer_name}\n"
         f"max_steps: {max_steps}\n"
-        f"sparse_rate: {sparse_rate}\n"
         f"sparse_exception: {sparse_exception}\n"
         f"random_indices: {random_indices}\n"
         f"seed: {seed}\n"
@@ -295,13 +297,10 @@ def train(
             task_type="CAUSAL_LM",
         )
     torch.manual_seed(seed)
-    if adapter_name not in ["sift", "super", "no"]:
-        model = get_peft_model(model, config)
-        model.print_trainable_parameters()  # Be more transparent about the % of trainable params.
-    elif adapter_name == "sift":
+    if adapter_name == "sift":
         sift = SIFT(
-            model, 
-            sparse_rate=sparse_rate,
+            model,
+            r=lora_r,
             sparse_module=sparse_module,
             exception=sparse_exception,
             grad_acc=gradient_accumulation_steps,
@@ -320,7 +319,7 @@ def train(
         model = get_dense_plus_sparse_model(
             model, 
             target_modules_list=target_modules,
-            sparse_rate=sparse_rate,
+            r=lora_r,
             indices_choice="random" if random_indices else "super",
             tokenizer=tokenizer,
             exception=sparse_exception,
@@ -328,10 +327,28 @@ def train(
         print('\n'*3)
         print(model)
         print('\n'*3)
+    elif adapter_name == "supra":
+        model.seqlen = model.config.max_position_embeddings
+        model = get_dense_plus_sparse_plus_lora_model(
+            model,
+            r_lora=4,
+            r_super=4,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            target_modules_list=target_modules,
+            indices_choice="random" if random_indices else "super",
+            tokenizer=tokenizer,
+            exception=sparse_exception,
+        )
+        print('\n' * 3)
+        print(model)
+        print('\n' * 3)
     elif adapter_name == "no":
         pass
-    else:
-        raise ValueError("Incorrect `adapter_name`")
+    elif adapter_name not in ["sift", "super", "no"]:
+        model = get_peft_model(model, config)
+        model.print_trainable_parameters()  # Be more transparent about the % of trainable params.
+
     if adapter_name == "prefix-tuning":
         model.to('cuda')
 
@@ -351,18 +368,19 @@ def train(
 
     copy_snapshot_to_out(output_dir)
     last_checkpoint = None
-    if os.path.isdir(output_dir) and not overwrite_output_dir:
-        last_checkpoint = get_last_checkpoint(output_dir)
-        if last_checkpoint is None and len(os.listdir(output_dir)) > 0:
-            raise ValueError(
-                f"Output directory ({output_dir}) already exists and is not empty. "
-                "Use --overwrite_output_dir to overcome."
-            )
-        elif last_checkpoint is not None and resume_from_checkpoint is None:
-            print(
-                f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
-                "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
-            )
+    if(load_from_checkpoints):
+        if os.path.isdir(output_dir) and not overwrite_output_dir:
+            last_checkpoint = get_last_checkpoint(output_dir)
+            if last_checkpoint is None and len(os.listdir(output_dir)) > 0:
+                raise ValueError(
+                    f"Output directory ({output_dir}) already exists and is not empty. "
+                    "Use --overwrite_output_dir to overcome."
+                )
+            elif last_checkpoint is not None and resume_from_checkpoint is None:
+                print(
+                    f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
+                    "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
+                )
     # if resume_from_checkpoint:
     #     # Check the available weights and load them
     #     checkpoint_name = os.path.join(
@@ -405,9 +423,18 @@ def train(
     if not int(os.environ.get("LOCAL_RANK", 0)):
         print(model)
         print('\ntrainable parameters:')
+        num_trainable = 0
+        total_params = 0
         for name, p in model.named_parameters():
+            total_params += p.data.numel()
             if p.requires_grad:
                 print(name)
+                num_trainable += p.data.numel()
+
+        print("Total number of parameters:", total_params)
+        print("Number of trainable params:", num_trainable)
+        print("Sparse_rate =", num_trainable/total_params)
+
         ddp_find_unused_parameters=False if ddp and adapter_name not in ["sift"] else True
     trainer = TrainerNirvana(
         model=model,
@@ -527,4 +554,13 @@ def generate_prompt(data_point):
 
 
 if __name__ == "__main__":
+    print("CUDA Available:", torch.cuda.is_available())
+    for __i in range(torch.cuda.device_count()):
+        print(f"GPU {__i}: {torch.cuda.get_device_name(__i)}")
+
+    print('torch', version('torch'))
+    print('transformers', version('transformers'))
+    print('accelerate', version('accelerate'))
+    print('# of gpus: ', torch.cuda.device_count())
+
     fire.Fire(train)

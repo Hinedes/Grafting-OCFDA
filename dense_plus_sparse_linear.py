@@ -50,36 +50,37 @@ class DensePlusSparseLinear(torch.autograd.Function):
 
 
 class SparseDenseLinear(nn.Module):
-    def __init__(self, base_layer, sparse_rate: float, indices=None):
+    def __init__(self, base_layer, r: int = 8, indices=None):
         super().__init__()
-        assert 0.0 <= sparse_rate <= 1.0, "sparse_rate shoud be a ratio between 0 and 1"
         self.weight = base_layer.weight
         self.bias = base_layer.bias
         self.num_elements = self.weight.numel()
-        self.num_nonzero = int(self.weight.numel() * (sparse_rate))
-        self.sparse_rate = sparse_rate
+
+        in_features, out_features = self.weight.shape
+
+        super_params = (out_features + in_features) * r
 
         if getattr(base_layer, "state", None) is not None:
             self.state = base_layer.state
 
         if indices is None:
             # indices = torch.randperm(self.num_elements-1)
-            indices = torch.randint(0, self.num_elements, (self.num_nonzero,))
-        indices = indices.to(dtype=torch.int32, device=self.weight.device)[:self.num_nonzero]
+            indices = torch.randint(0, self.num_elements, (super_params,))
+        indices = indices.to(dtype=torch.int32, device=self.weight.device)[:super_params]
         
         self.values = nn.Parameter(
-            torch.zeros(self.num_nonzero, dtype=torch.float32, device=self.weight.device)
+            torch.zeros(super_params, dtype=torch.float32, device=self.weight.device)
         )
         self.register_buffer('indices', indices)
         
     def forward(self, input):
         return DensePlusSparseLinear.apply(input, self.weight, self.indices, self.values, self.bias)
-    
 
-def get_dense_plus_sparse_model(model, target_modules_list, sparse_rate=0.01, indices_choice="random", tokenizer=None, exception=[]):
+
+def get_dense_plus_sparse_model(model, target_modules_list, r: int = 8, indices_choice="random", tokenizer=None, exception=[]):
     if indices_choice == "super":
         assert tokenizer is not None, "`Super` option requires tokenizer to determine outliers indices."
-        prepare_super_mask(model, tokenizer, dev=model.device, outliers_ratio=sparse_rate)
+        prepare_super_mask(model, tokenizer, dev=model.device, r=r)
 
     def _get_submodules(key):
         parent = model.get_submodule(".".join(key.split(".")[:-1]))
@@ -89,7 +90,7 @@ def get_dense_plus_sparse_model(model, target_modules_list, sparse_rate=0.01, in
 
     def _replace_module(parent_module, child_name, old_module):
         indices = getattr(old_module.weight, "wanda_topk_indices", None)
-        new_module = SparseDenseLinear(old_module, sparse_rate=sparse_rate, indices=indices)
+        new_module = SparseDenseLinear(old_module, r=r, indices=indices)
         setattr(parent_module, child_name, new_module)
 
     for module_name, _ in model.named_modules():
