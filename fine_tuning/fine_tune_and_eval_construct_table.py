@@ -113,10 +113,7 @@ def set_seed(seed):
     torch.random.manual_seed(seed)
 
 
-def construct_table(seed, cuda_visible_devices):
-    if cuda_visible_devices != 'all':
-        os.environ["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices
-
+def construct_table(seed):
     print("CUDA Available:", torch.cuda.is_available())
     for __i in range(torch.cuda.device_count()):
         print(f"GPU {__i}: {torch.cuda.get_device_name(__i)}")
@@ -175,16 +172,15 @@ def construct_table(seed, cuda_visible_devices):
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--seed', type=int, default=0)
-    parser.add_argument("--cuda_visible_devices", default="0", type=str, help="In case you want to select particular "
-                                                                              "GPUs")
+
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
 
-    eval_table = load_table("eval_table")
-    eval_avg_table = load_table("eval_avg_table")
-    print_latex_table(eval_table)
+    #eval_table = load_table("eval_table")
+    #eval_avg_table = load_table("eval_avg_table")
+    #print_latex_table(eval_table)
 
-    #construct_table(args.seed, args.cuda_visible_devices)
+    construct_table(args.seed)
