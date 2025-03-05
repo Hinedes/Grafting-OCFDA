@@ -329,8 +329,8 @@ def train(
         model.seqlen = model.config.max_position_embeddings
         model = get_dense_plus_sparse_plus_lora_model(
             model,
-            r_lora=3,
-            r_super=lora_r-3,
+            r_lora=2,
+            r_super=lora_r-2,
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
             target_modules_list=target_modules,

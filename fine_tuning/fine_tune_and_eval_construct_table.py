@@ -1,4 +1,22 @@
+import importlib.util
+
+import argparse
 import os
+import sys
+
+original_find_spec = importlib.util.find_spec
+def custom_find_spec(name, *args, **kwargs):
+    if name == 'peft':
+        return None
+    return original_find_spec(name, *args, **kwargs)
+importlib.util.find_spec = custom_find_spec
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PEFT_PATH = os.path.abspath(os.path.join(os.getcwd(), "peft/src/"))
+
+sys.path.insert(0, PEFT_PATH)
+sys.path.insert(1, BASE_DIR)
+
 import pickle
 
 import pandas as pd
@@ -14,11 +32,12 @@ from finetune import train
 from evaluate import eval_model
 
 
+
 def get_lists():
     #models = ['meta-llama/Llama-3.2-1B', 'meta-llama/Llama-3.2-3B', 'meta-llama/Llama-3.1-8B']
-    models = ['meta-llama/Llama-3.2-1B']
+    models = ['meta-llama/Llama-3.2-1B', 'meta-llama/Llama-3.2-3B']
     lrs = [5e-5, 1e-4, 2e-4]
-    adapters = ['lora', 'sift-rand', 'sift-topk', 'super-rand', 'super-wanda', 'supra-random', 'supra-wanda']
+    adapters = ['lora', 'sift-rand', 'sift-topk', 'super-rand', 'super-wanda', 'supra-rand', 'supra-wanda']
     datasets = ['AddSub', 'MultiArith', 'SingleEq', 'gsm8k', 'AQuA', 'SVAMP']
 
     return models, lrs, adapters, datasets
@@ -109,7 +128,6 @@ def construct_table(seed, cuda_visible_devices):
 
     models, lrs, adapters, datasets = get_lists()
 
-    sparse_rate = 0.013392857142857142  # TODO: compute this base on the size of the model
     target_modules = ["q_proj", "k_proj", "v_proj", "up_proj", "down_proj"]
     data_path = 'ft-training_set/math_10k.json'
 
@@ -131,30 +149,16 @@ def construct_table(seed, cuda_visible_devices):
                     print("Already computed...")
                     continue
 
-                model_out_dir = './trained_models/' + model_name.replace("/", "_") + "/lr=" + str(lr) + '/' + adapter
-
-                # If the directory already exists - then we do not need to retrain with the same parameters
-                if not os.path.isdir(model_out_dir):
-                    train(base_model=model_name, data_path=data_path, output_dir=model_out_dir,
-                          save_step=1000, eval_step=1000, batch_size=16,
-                          micro_batch_size=16, num_epochs=3, learning_rate=lr,
-                          cutoff_len=256, val_set_size=120, compile=0, seed=seed,
-                          sparse_rate=sparse_rate, adapter_name=adapter.split('-', 1)[0], random_indices='rand' in adapter)
+                model, tokenizer = train(base_model=model_name, data_path=data_path, target_modules=target_modules,
+                                         eval_step=1000, batch_size=16, micro_batch_size=16,
+                                         num_epochs=3, learning_rate=lr, cutoff_len=256,
+                                         val_set_size=120, compile=0, seed=seed,
+                                         adapter_name=adapter.split('-', 1)[0], random_indices='rand' in adapter)
 
                 name_to_acc = {task: 0 for task in datasets}
 
                 for dataset in datasets:
-
-                    # This is just to support arguments for eval.py:
-                    eval_adapter = 'no'
-                    if 'super' in adapter:
-                        eval_adapter = 'super'
-
-                    short_model_name = model_name.split('/', 1)[-1]
-
-                    accuracy = eval_model(dataset_name=dataset, model_name=short_model_name, adapter=eval_adapter,
-                                          base_model=model_name, lora_weights=model_out_dir, load_8bit=False,
-                                          debug=False, target_modules=target_modules, sparse_rate=sparse_rate) * 100
+                    accuracy = eval_model(dataset_name=dataset, model=model, tokenizer=tokenizer) * 100
                     print(dataset + " accuracy: " + str(accuracy) + "%")
 
                     name_to_acc[dataset] = accuracy
