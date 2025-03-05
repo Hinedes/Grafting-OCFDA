@@ -26,7 +26,7 @@ except:  # noqa: E722
     pass
 
 
-def eval_model(dataset_name, model_name, adapter, base_model, lora_weights, load_8bit, debug, target_modules, r) -> float:
+def eval_model(dataset_name, model, tokenizer) -> float:
     def evaluate(
             instruction,
             input=None,
@@ -77,16 +77,12 @@ def eval_model(dataset_name, model_name, adapter, base_model, lora_weights, load
         print("Response:", evaluate(instruction))
         print()
     """
-    save_file = f'experiment/{model_name}-{adapter}-{dataset_name}.json'
-    create_dir('experiment/')
 
     dataset = load_data(dataset_name)
-    tokenizer, model = load_model(base_model, model_name, lora_weights, load_8bit, adapter, target_modules, r)
 
     total = len(dataset)
     correct = 0
     miss = 0.001
-    output_data = []
     pbar = tqdm(total=total)
 
     accuracy = 0.0
@@ -113,7 +109,6 @@ def eval_model(dataset_name, model_name, adapter, base_model, lora_weights, load
         new_data['output_pred'] = outputs
         new_data['pred'] = predict
         new_data['flag'] = flag
-        output_data.append(new_data)
         print(' ')
         print('---------------')
         print(outputs)
@@ -124,14 +119,18 @@ def eval_model(dataset_name, model_name, adapter, base_model, lora_weights, load
         accuracy = correct / (idx + 1)
 
         print(f'\rtest:{idx + 1}/{total} | accuracy {correct}  {accuracy}')
-        with open(save_file, 'w+') as f:
-            json.dump(output_data, f, indent=4)
         pbar.update(1)
     pbar.close()
     print('\n')
     print('test finished')
 
     return accuracy
+
+
+def load_model_and_eval(dataset_name, model_name, adapter, base_model, lora_weights, load_8bit, target_modules, r) -> float:
+    tokenizer, model = load_model(base_model, model_name, lora_weights, load_8bit, adapter, target_modules, r)
+
+    return eval_model(dataset_name, model, tokenizer)
 
 
 def create_dir(dir_path):

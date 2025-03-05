@@ -18,7 +18,7 @@ def get_lists():
     #models = ['meta-llama/Llama-3.2-1B', 'meta-llama/Llama-3.2-3B', 'meta-llama/Llama-3.1-8B']
     models = ['meta-llama/Llama-3.2-1B']
     lrs = [5e-5, 1e-4, 2e-4]
-    adapters = ['lora', 'sift-rand', 'sift-topk', 'super-rand', 'super-wanda']
+    adapters = ['lora', 'sift-rand', 'sift-topk', 'super-rand', 'super-wanda', 'supra-random', 'supra-wanda']
     datasets = ['AddSub', 'MultiArith', 'SingleEq', 'gsm8k', 'AQuA', 'SVAMP']
 
     return models, lrs, adapters, datasets

@@ -83,7 +83,7 @@ def train(
         use_gradient_checkpointing: bool = False,
         load_from_checkpoints: bool = False,
         eval_step: int = 200,
-        save_step: int = 200,
+        save_step: int = 1000,
         seed=0,
         # lora hyperparams
         lora_r: int = 8,
@@ -208,11 +208,6 @@ def train(
             attn_implementation=attn_implementation
         )
 
-    # if model.config.model_type == "llama":
-    #     # Due to the name of transformers' LlamaTokenizer, we have to do this
-    #     tokenizer = LlamaTokenizer.from_pretrained(base_model)
-    # else:
-    #     tokenizer = AutoTokenizer.from_pretrained(base_model, trust_remote_code=True)
     tokenizer = AutoTokenizer.from_pretrained(base_model, trust_remote_code=True)
 
     tokenizer.pad_token_id = (
@@ -334,8 +329,8 @@ def train(
         model.seqlen = model.config.max_position_embeddings
         model = get_dense_plus_sparse_plus_lora_model(
             model,
-            r_lora=4,
-            r_super=4,
+            r_lora=3,
+            r_super=lora_r-3,
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
             target_modules_list=target_modules,
@@ -439,7 +434,7 @@ def train(
         print("Sparse_rate =", num_trainable / total_params)
 
         ddp_find_unused_parameters = False if ddp and adapter_name not in ["sift"] else True
-    trainer = TrainerNirvana(
+    trainer = Trainer(
         model=model,
         train_dataset=train_data,
         eval_dataset=val_data,
@@ -499,24 +494,26 @@ def train(
     #     model = torch.compile(model)
 
     checkpoint = None
-    if resume_from_checkpoint is not None:
-        checkpoint = resume_from_checkpoint
-    elif last_checkpoint is not None:
-        checkpoint = last_checkpoint
-        if (not int(os.environ.get("LOCAL_RANK", 0))
-                and use_wandb):
-            import wandb
-            import json
-            with open(os.path.join(output_dir, "run_metadata.json"), 'r') as f:
-                run_metadata = json.load(f)
-            wandb.init(
-                project=run_metadata["project"],
-                id=run_metadata["run_id"],
-                name=run_metadata.get("run_name"),
-                entity=run_metadata.get("entity"),
-                resume="must"
-            )
-            print(f"Resumed run: {wandb.run.name} (ID: {wandb.run.id})")
+
+    if load_from_checkpoints:
+        if resume_from_checkpoint is not None:
+            checkpoint = resume_from_checkpoint
+        elif last_checkpoint is not None:
+            checkpoint = last_checkpoint
+            if (not int(os.environ.get("LOCAL_RANK", 0))
+                    and use_wandb):
+                import wandb
+                import json
+                with open(os.path.join(output_dir, "run_metadata.json"), 'r') as f:
+                    run_metadata = json.load(f)
+                wandb.init(
+                    project=run_metadata["project"],
+                    id=run_metadata["run_id"],
+                    name=run_metadata.get("run_name"),
+                    entity=run_metadata.get("entity"),
+                    resume="must"
+                )
+                print(f"Resumed run: {wandb.run.name} (ID: {wandb.run.id})")
 
     trainer.train(resume_from_checkpoint=checkpoint)
 
@@ -534,9 +531,7 @@ def train(
         print('-' * 20)
         copy_out_to_snapshot(output_dir)
 
-    print(
-        "\n If there's a warning about missing keys above, please disregard :)"
-    )
+    return model, tokenizer
 
 
 def generate_prompt(data_point):
