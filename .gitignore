@@ -4,3 +4,7 @@ venv
 /experiments/instruction_finetuning/exp/
 /experiments/out/
 **/__pycache__/
+fine_tuning/experiment/
+fine_tuning/lora-alpaca/
+fine_tuning/out/
+fine_tuning/trained_models/

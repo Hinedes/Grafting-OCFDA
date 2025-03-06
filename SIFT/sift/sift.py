@@ -46,7 +46,7 @@ class SIFT():
                 param.requires_grad = True
                 ## set the number of trainable components of the parameter according to the sparse rate
 
-                in_features, out_features = param.weight.shape
+                in_features, out_features = param.shape
                 #train_num = min(int(self.sparse_rate * param.numel()) + 1, param.numel())
 
                 # more reliable way: number of trainable parameters is the same as in LoRA

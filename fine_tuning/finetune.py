@@ -306,14 +306,6 @@ def train(
         )
     elif adapter_name == "super":
         model.seqlen = model.config.max_position_embeddings
-        # sift = Super(
-        #     model, 
-        #     tokenizer,
-        #     outliers_ratio=sparse_rate,
-        #     sparse_module=sparse_module,
-        #     exception=sparse_exception,
-        #     grad_acc=gradient_accumulation_steps,
-        # )
         model = get_dense_plus_sparse_model(
             model,
             target_modules_list=target_modules,
@@ -379,25 +371,6 @@ def train(
                     f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
                     "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
                 )
-    # if resume_from_checkpoint:
-    #     # Check the available weights and load them
-    #     checkpoint_name = os.path.join(
-    #         resume_from_checkpoint, "pytorch_model.bin"
-    #     )  # Full checkpoint
-    #     if not os.path.exists(checkpoint_name):
-    #         checkpoint_name = os.path.join(
-    #             resume_from_checkpoint, "adapter_model.bin"
-    #         )  # only LoRA model - LoRA config above has to fit
-    #         resume_from_checkpoint = (
-    #             False  # So the trainer won't try loading its state
-    #         )
-    #     # The two files above have a different name depending on how they were saved, but are actually the same.
-    #     if os.path.exists(checkpoint_name):
-    #         print(f"Restarting from {checkpoint_name}")
-    #         adapters_weights = torch.load(checkpoint_name)
-    #         model = set_peft_model_state_dict(model, adapters_weights)
-    #     else:
-    #         print(f"Checkpoint {checkpoint_name} not found")
 
     if val_set_size > 0:
         train_val = data["train"].train_test_split(
