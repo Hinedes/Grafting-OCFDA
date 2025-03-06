@@ -322,7 +322,7 @@ def train(
         model = get_dense_plus_sparse_plus_lora_model(
             model,
             r_lora=2,
-            r_super=lora_r-2,
+            r_super=lora_r - 2,
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
             target_modules_list=target_modules,
@@ -450,22 +450,24 @@ def train(
     # TODO load only adapter
     # if adapter_name not in ["sift", "super", "supra"]:
 
-    old_state_dict = model.state_dict
     get_state_dict_func = get_peft_model_state_dict
     if adapter_name == "super":
         get_state_dict_func = get_sparse_dense_model_state_dict
     elif adapter_name == "supra":
         get_state_dict_func = get_sparse_dense_lora_model_state_dict
 
-    model.state_dict = (
-        lambda self, *_, **__: get_state_dict_func(
-            self, old_state_dict()
-        )
-    ).__get__(model, type(model))
+    if "sift" not in adapter_name:
+        old_state_dict = model.state_dict
+        model.state_dict = (
+            lambda self, *_, **__: get_state_dict_func(
+                self, old_state_dict()
+            )
+        ).__get__(model, type(model))
 
     # if torch.__version__ >= "2" and sys.platform != "win32":
     #     model = torch.compile(model)
 
+    '''
     checkpoint = None
 
     if load_from_checkpoints:
@@ -487,8 +489,11 @@ def train(
                     resume="must"
                 )
                 print(f"Resumed run: {wandb.run.name} (ID: {wandb.run.id})")
-
+    
     trainer.train(resume_from_checkpoint=checkpoint)
+    '''
+
+    trainer.train()
 
     if not int(os.environ.get("LOCAL_RANK", 0)):
         # save pretrained

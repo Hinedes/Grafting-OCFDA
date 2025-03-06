@@ -3,6 +3,7 @@ import importlib.util
 import argparse
 import os
 import sys
+from platform import python_version
 
 original_find_spec = importlib.util.find_spec
 def custom_find_spec(name, *args, **kwargs):
@@ -35,8 +36,8 @@ from evaluate import eval_model
 
 def get_lists():
     #models = ['meta-llama/Llama-3.2-1B', 'meta-llama/Llama-3.2-3B', 'meta-llama/Llama-3.1-8B']
-    models = ['meta-llama/Llama-3.2-1B', 'meta-llama/Llama-3.2-3B']
-    lrs = [5e-5, 1e-4, 2e-4]
+    models = ['meta-llama/Llama-3.2-1B']
+    lrs = [5e-5, 1e-4, 2e-4, 5e-4]
     adapters = ['lora', 'sift-rand', 'sift-topk', 'super-rand', 'super-wanda', 'supra-rand', 'supra-wanda']
     datasets = ['AddSub', 'MultiArith', 'SingleEq', 'gsm8k', 'AQuA', 'SVAMP']
 
@@ -165,8 +166,8 @@ def construct_table(seed):
                 eval_table.loc[(lr, model_name, adapter), 'Average'] = average_score
                 eval_avg_table.loc[(lr, adapter), model_name] = average_score
 
-                save_table(eval_table, filename="eval_table")
-                save_table(eval_avg_table, filename="eval_avg_table")
+                save_table(eval_table, filename="eval_table", dir="out/" + str(lr))
+                save_table(eval_avg_table, filename="eval_avg_table", dir="out/" + str(lr))
 
 
 def parse_args():
