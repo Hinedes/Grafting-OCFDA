@@ -50,7 +50,7 @@ def find_layers(block, layers=[nn.Linear], name=''):
 
 
 @torch.no_grad()
-def prepare_super_mask(model, tokenizer, dev, r: int = 8, nsamples=128, seed=228):
+def prepare_super_mask(model, tokenizer, dev, sparse_rate, nsamples=128, seed=228):
     dataloader, _ = get_loaders("c4", nsamples, seed=seed, seqlen=model.seqlen, tokenizer=tokenizer)
 
     use_cache = model.config.use_cache
@@ -148,7 +148,9 @@ def prepare_super_mask(model, tokenizer, dev, r: int = 8, nsamples=128, seed=228
             flat_tensor = W_metric.view(-1)
 
             in_features, out_features = subset[name].weight.shape
-            train_num = (out_features + in_features) * r
+
+            #train_num = (out_features + in_features) * r
+            train_num = min(int(sparse_rate * subset[name].weight.numel()) + 1, subset[name].weight.numel())
 
             topk_indices = torch.topk(flat_tensor, k=train_num).indices
             subset[name].weight.wanda_topk_indices = topk_indices.cpu()

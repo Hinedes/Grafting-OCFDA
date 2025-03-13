@@ -50,7 +50,7 @@ class DensePlusSparseLinear(torch.autograd.Function):
 
 
 class SparseDenseLinear(nn.Module):
-    def __init__(self, base_layer, r: int = 8, indices=None):
+    def __init__(self, base_layer, sparse_rate, indices=None):
         super().__init__()
         self.weight = base_layer.weight
         self.bias = base_layer.bias
@@ -58,7 +58,8 @@ class SparseDenseLinear(nn.Module):
 
         in_features, out_features = self.weight.shape
 
-        super_params = (out_features + in_features) * r
+        #super_params = (out_features + in_features) * r
+        super_params = min(int(sparse_rate * self.weight.numel()) + 1, self.weight.numel())
 
         if getattr(base_layer, "state", None) is not None:
             self.state = base_layer.state
@@ -77,10 +78,10 @@ class SparseDenseLinear(nn.Module):
         return DensePlusSparseLinear.apply(input, self.weight, self.indices, self.values, self.bias)
 
 
-def get_dense_plus_sparse_model(model, target_modules_list, r: int = 8, indices_choice="random", tokenizer=None, exception=[]):
+def get_dense_plus_sparse_model(model, target_modules_list, sparse_rate, indices_choice="random", tokenizer=None, exception=[]):
     if indices_choice == "super":
         assert tokenizer is not None, "`Super` option requires tokenizer to determine outliers indices."
-        prepare_super_mask(model, tokenizer, dev=model.device, r=r)
+        prepare_super_mask(model, tokenizer, dev=model.device, sparse_rate=sparse_rate)
 
     def _get_submodules(key):
         parent = model.get_submodule(".".join(key.split(".")[:-1]))
@@ -90,7 +91,7 @@ def get_dense_plus_sparse_model(model, target_modules_list, r: int = 8, indices_
 
     def _replace_module(parent_module, child_name, old_module):
         indices = getattr(old_module.weight, "wanda_topk_indices", None)
-        new_module = SparseDenseLinear(old_module, r=r, indices=indices)
+        new_module = SparseDenseLinear(old_module, sparse_rate=sparse_rate, indices=indices)
         setattr(parent_module, child_name, new_module)
 
     for module_name, _ in model.named_modules():

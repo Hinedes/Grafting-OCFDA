@@ -9,8 +9,8 @@ from src.mask import prepare_super_mask
 class SparseDenseLoraLinear(nn.Module):
     def __init__(self,
                  base_layer,
+                 sparse_rate,
                  r_lora: int = 4,
-                 r_super: int = 4,
                  lora_alpha: int = 16,
                  lora_dropout: float = 0.05,
                  indices=None):
@@ -21,7 +21,13 @@ class SparseDenseLoraLinear(nn.Module):
 
         in_features, out_features = self.weight.shape
 
-        super_params = (out_features + in_features) * r_super
+        #super_params = (out_features + in_features) * r_super
+
+        lora_params = (out_features + in_features) * r_lora
+        super_params = max(0, min(int(sparse_rate * self.weight.numel()) + 1, self.weight.numel()) - lora_params)
+
+        print("lora_params = ", lora_params)
+        print("super_params = ", super_params)
 
         if getattr(base_layer, "state", None) is not None:
             self.state = base_layer.state
@@ -34,11 +40,10 @@ class SparseDenseLoraLinear(nn.Module):
         self.register_buffer('indices', indices)
 
         if r_lora > 0:
-            self.lora_A = nn.Linear(out_features, r_lora, bias=False, device=self.weight.device)
-            self.lora_B = nn.Linear(r_lora, in_features, bias=False, device=self.weight.device)
+            self.lora_A = nn.Linear(out_features, r_lora, bias=False, device=self.weight.device, dtype=torch.float32)
+            self.lora_B = nn.Linear(r_lora, in_features, bias=False, device=self.weight.device, dtype=torch.float32)
             self.scaling = lora_alpha / r_lora
             self.lora_dropout = nn.Dropout(p=lora_dropout) if lora_dropout > 0.0 else lambda x: x
-            self.weight.requires_grad = False
 
         self.reset_parameters()
 
@@ -63,8 +68,8 @@ class SparseDenseLoraLinear(nn.Module):
 
 def get_dense_plus_sparse_plus_lora_model(model,
                                           target_modules_list,
+                                          sparse_rate,
                                           r_lora: int = 4,
-                                          r_super: int = 4,
                                           lora_alpha: int = 16,
                                           lora_dropout: float = 0.05,
                                           indices_choice="random",
@@ -74,7 +79,7 @@ def get_dense_plus_sparse_plus_lora_model(model,
         exception = []
     if indices_choice == "super":
         assert tokenizer is not None, "`Super` option requires tokenizer to determine outliers indices."
-        prepare_super_mask(model, tokenizer, dev=model.device, r=r_super)
+        prepare_super_mask(model, tokenizer, dev=model.device, sparse_rate=sparse_rate)
 
     def _get_submodules(key):
         parent = model.get_submodule(".".join(key.split(".")[:-1]))
@@ -85,8 +90,8 @@ def get_dense_plus_sparse_plus_lora_model(model,
     def _replace_module(parent_module, child_name, old_module):
         indices = getattr(old_module.weight, "wanda_topk_indices", None)
         new_module = SparseDenseLoraLinear(old_module,
+                                           sparse_rate=sparse_rate,
                                            r_lora=r_lora,
-                                           r_super=r_super,
                                            lora_alpha=lora_alpha,
                                            lora_dropout=lora_dropout,
                                            indices=indices)

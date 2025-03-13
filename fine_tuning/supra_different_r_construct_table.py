@@ -33,39 +33,37 @@ from finetune import train
 from evaluate import eval_model
 
 
-
 def get_lists():
-    #models = ['meta-llama/Llama-3.2-1B', 'meta-llama/Llama-3.2-3B', 'meta-llama/Llama-3.1-8B']
     models = ['meta-llama/Llama-3.2-1B']
     lrs = [5e-5, 1e-4, 2e-4, 5e-4]
-    adapters = ['lora', 'sift-rand', 'sift-topk', 'super', 'supra-r1', 'supra-r2']
+    r_loras = [0, 1, 2, 3, 4, 5, 6, 7, 8]
     datasets = ['AddSub', 'MultiArith', 'SingleEq', 'gsm8k', 'AQuA', 'SVAMP']
 
-    return models, lrs, adapters, datasets
+    return models, lrs, r_loras, datasets
 
 
 def create_initial_eval_table():
-    models, lrs, adapters, datasets = get_lists()
+    models, lrs, r_loras, datasets = get_lists()
 
     datasets.append('Average')
 
-    # Create a MultiIndex for rows with sparsities, methods, and tasks
-    index = pd.MultiIndex.from_product([lrs, models, adapters], names=['lr', 'Model', 'Adapter'])
+    # Create a MultiIndex for rows with sparsity, methods, and tasks
+    index = pd.MultiIndex.from_product([lrs, models, r_loras], names=['lr', 'Model', 'lora r'])
 
-    # Create an empty DataFrame with sparsities, methods, and tasks as rows and models as columns
+    # Create an empty DataFrame with sparsity, methods, and tasks as rows and models as columns
     df = pd.DataFrame(index=index, columns=datasets)
 
     return df
 
 
 def create_initial_eval_avg_table():
-    models, lrs, adapters, _ = get_lists()
+    models, lrs, r_loras, _ = get_lists()
 
-    # Create a MultiIndex for rows with methods and sparsities
-    index = pd.MultiIndex.from_product([lrs, adapters], names=['lr', 'Adapter'])
+    # Create a MultiIndex for rows with methods and sparsity
+    index = pd.MultiIndex.from_product([lrs], names=['lr'])
 
-    # Create an empty DataFrame with methods and sparsities as rows and models as columns
-    df = pd.DataFrame(index=index, columns=models)
+    # Create an empty DataFrame with methods and sparsity as rows and models as columns
+    df = pd.DataFrame(index=index, columns=r_loras)
 
     return df
 
@@ -124,7 +122,7 @@ def construct_table(seed):
     print('accelerate', version('accelerate'))
     print('# of gpus: ', torch.cuda.device_count())
 
-    models, lrs, adapters, datasets = get_lists()
+    models, lrs, r_loras, datasets = get_lists()
 
     target_modules = ["q_proj", "k_proj", "v_proj", "up_proj", "down_proj"]
     data_path = 'ft-training_set/math_10k.json'
@@ -138,26 +136,20 @@ def construct_table(seed):
 
     for model_name in models:
         for lr in lrs:
-            for adapter in adapters:
-
+            for r_lora in r_loras:
                 set_seed(seed)
 
-                print("Model: " + model_name + " lr = " + str(lr) + " adapter: " + adapter)
-                if pd.notna(eval_avg_table.loc[(lr, adapter), model_name]):
-                    print("Already computed...")
-                    continue
-
-                supra_lora_r=0
-                if "r1" in adapter:
-                    supra_lora_r = 1
-                if "r2" in adapter:
-                    supra_lora_r = 2
+                print("Model: " + model_name + " lr = " + str(lr) + " adapter: supra-wanda r_lora = " + str(r_lora))
+                #if pd.notna(eval_avg_table.loc[lr, r_lora]):
+                #    print("Already computed...")
+                #    continue
 
                 model, tokenizer = train(base_model=model_name, data_path=data_path, target_modules=target_modules,
                                          eval_step=1000, batch_size=16, micro_batch_size=16,
                                          num_epochs=3, learning_rate=lr, cutoff_len=256,
-                                         val_set_size=120, compile=0, seed=seed, supra_lora_r=supra_lora_r,
-                                         adapter_name=adapter.split('-', 1)[0], random_indices='rand' in adapter)
+                                         val_set_size=120, compile=0, seed=seed,
+                                         supra_lora_r=r_lora, supra_super_r=8-r_lora,
+                                         adapter_name='supra', random_indices=False)
 
                 name_to_acc = {task: 0 for task in datasets}
 
@@ -166,11 +158,11 @@ def construct_table(seed):
                     print(dataset + " accuracy: " + str(accuracy) + "%")
 
                     name_to_acc[dataset] = accuracy
-                    eval_table.loc[(lr, model_name, adapter), dataset] = accuracy
+                    eval_table.loc[(lr, model_name, r_lora), dataset] = accuracy
 
                 average_score = sum(name_to_acc.values()) / len(name_to_acc)
-                eval_table.loc[(lr, model_name, adapter), 'Average'] = average_score
-                eval_avg_table.loc[(lr, adapter), model_name] = average_score
+                eval_table.loc[(lr, model_name, r_lora), 'Average'] = average_score
+                eval_avg_table.loc[lr, r_lora] = average_score
 
                 save_table(eval_table, filename="eval_table", dir="out/" + str(lr))
                 save_table(eval_avg_table, filename="eval_avg_table", dir="out/" + str(lr))

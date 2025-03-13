@@ -4,12 +4,13 @@ import numpy as np
 import random
 
 class SIFT():
-    def __init__(self, model, sparse_module, r: int = 8, exception=[], grad_acc=1, gradient_checkpointing=False, random_indices=False) -> None:
+    def __init__(self, model, sparse_module, sparse_rate, exception=[], grad_acc=1, gradient_checkpointing=False, random_indices=False) -> None:
         self.model = model
         self.total_num = 0
         self.gradient_checkpointing = gradient_checkpointing
         
-        self.r = r
+        #self.r = r
+        self.sparse_rate = sparse_rate
 
         ## Parameters need to be trained sparsely
         self.sparse_module = sparse_module
@@ -47,10 +48,10 @@ class SIFT():
                 ## set the number of trainable components of the parameter according to the sparse rate
 
                 in_features, out_features = param.shape
-                #train_num = min(int(self.sparse_rate * param.numel()) + 1, param.numel())
+                train_num = min(int(self.sparse_rate * param.numel()) + 1, param.numel())
 
                 # more reliable way: number of trainable parameters is the same as in LoRA
-                train_num = (out_features + in_features) * self.r
+                #train_num = (out_features + in_features) * self.r
 
                 sparse_param = nn.Parameter(param.new_zeros(train_num), requires_grad=True)
                 sparse_param.grad = sparse_param.new_zeros(train_num)

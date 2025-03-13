@@ -64,6 +64,32 @@ from dense_plus_sparse_linear_plus_lora import get_dense_plus_sparse_plus_lora_m
     get_sparse_dense_lora_model_state_dict
 
 
+def compute_sparse_rate(model, target_modules):
+    def is_in_target_modules(_name, additional_weights="values"):
+        if additional_weights in _name:
+            return True
+
+        for item in target_modules:
+            if item in _name:
+                return True
+        return False
+
+    num_trainable = 0
+    num_non_trainable = 0
+    for name, p in model.named_parameters():
+        if is_in_target_modules(name):
+            if p.requires_grad:
+                num_trainable += p.data.numel()
+            else:
+                num_non_trainable += p.data.numel()
+
+    return num_trainable, num_non_trainable, num_trainable / (num_non_trainable + 1e-9)
+
+# 0.0059621
+# 0.0059622
+# 0.0059622
+#
+
 def train(
         # model/data params
         base_model: str = "",  # the only required argument
@@ -72,6 +98,7 @@ def train(
         overwrite_output_dir: bool = False,
         adapter_name: str = "lora",
         load_8bit: bool = False,
+        sparse_rate=0.005962171052631579,
         # training hyperparams
         batch_size: int = 128,
         micro_batch_size: int = 4,
@@ -87,6 +114,7 @@ def train(
         seed=0,
         # lora hyperparams
         lora_r: int = 8,
+        supra_lora_r: int = 2,
         lora_alpha: int = 16,
         lora_dropout: float = 0.05,
         lora_target_modules: List[str] = None,
@@ -298,7 +326,7 @@ def train(
     if adapter_name == "sift":
         sift = SIFT(
             model,
-            r=lora_r,
+            sparse_rate=sparse_rate,
             sparse_module=sparse_module,
             exception=sparse_exception,
             grad_acc=gradient_accumulation_steps,
@@ -309,7 +337,7 @@ def train(
         model = get_dense_plus_sparse_model(
             model,
             target_modules_list=target_modules,
-            r=lora_r,
+            sparse_rate=sparse_rate,
             indices_choice="random" if random_indices else "super",
             tokenizer=tokenizer,
             exception=sparse_exception,
@@ -321,8 +349,8 @@ def train(
         model.seqlen = model.config.max_position_embeddings
         model = get_dense_plus_sparse_plus_lora_model(
             model,
-            r_lora=2,
-            r_super=lora_r - 2,
+            r_lora=supra_lora_r,
+            sparse_rate=sparse_rate,
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
             target_modules_list=target_modules,
@@ -333,14 +361,17 @@ def train(
         print('\n' * 3)
         print(model)
         print('\n' * 3)
-    elif adapter_name == "no":
-        pass
     elif adapter_name not in ["sift", "super", "no"]:
         model = get_peft_model(model, config)
         model.print_trainable_parameters()  # Be more transparent about the % of trainable params.
 
     if adapter_name == "prefix-tuning":
         model.to('cuda')
+
+    num_trainable, num_non_trainable, sp_rate = compute_sparse_rate(model=model, target_modules=target_modules)
+    print("Initial number of parameters (non trainable):", num_non_trainable)
+    print("Number of trainable params:", num_trainable)
+    print("Sparse_rate =", sp_rate)
 
     if optimizer_name.lower() == "adam":
         trainable_params = [p for p in model.parameters() if p.requires_grad]
@@ -392,20 +423,6 @@ def train(
         model.model_parallel = True
 
     if not int(os.environ.get("LOCAL_RANK", 0)):
-        print(model)
-        print('\ntrainable parameters:')
-        num_trainable = 0
-        total_params = 0
-        for name, p in model.named_parameters():
-            total_params += p.data.numel()
-            if p.requires_grad:
-                print(name)
-                num_trainable += p.data.numel()
-
-        print("Total number of parameters:", total_params)
-        print("Number of trainable params:", num_trainable)
-        print("Sparse_rate =", num_trainable / total_params)
-
         ddp_find_unused_parameters = False if ddp and adapter_name not in ["sift"] else True
     trainer = Trainer(
         model=model,
