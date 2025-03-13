@@ -85,10 +85,6 @@ def compute_sparse_rate(model, target_modules):
 
     return num_trainable, num_non_trainable, num_trainable / (num_non_trainable + 1e-9)
 
-# 0.0059621
-# 0.0059622
-# 0.0059622
-#
 
 def train(
         # model/data params
@@ -110,7 +106,7 @@ def train(
         use_gradient_checkpointing: bool = False,
         load_from_checkpoints: bool = False,
         eval_step: int = 200,
-        save_step: int = 1000,
+        save_step: int = 200,
         seed=0,
         # lora hyperparams
         lora_r: int = 8,
@@ -323,7 +319,11 @@ def train(
             task_type="CAUSAL_LM",
         )
     torch.manual_seed(seed)
-    if adapter_name == "sift":
+
+    if adapter_name not in ["sift", "super", "no", "supra"]:
+        model = get_peft_model(model, config)
+        model.print_trainable_parameters()  # Be more transparent about the % of trainable params.
+    elif adapter_name == "sift":
         sift = SIFT(
             model,
             sparse_rate=sparse_rate,
@@ -361,9 +361,10 @@ def train(
         print('\n' * 3)
         print(model)
         print('\n' * 3)
-    elif adapter_name not in ["sift", "super", "no"]:
-        model = get_peft_model(model, config)
-        model.print_trainable_parameters()  # Be more transparent about the % of trainable params.
+    elif adapter_name == "no":
+        pass
+    else:
+        raise ValueError("Incorrect `adapter_name`")
 
     if adapter_name == "prefix-tuning":
         model.to('cuda')

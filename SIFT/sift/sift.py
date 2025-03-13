@@ -4,7 +4,9 @@ import numpy as np
 import random
 
 class SIFT():
-    def __init__(self, model, sparse_module, sparse_rate, exception=[], grad_acc=1, gradient_checkpointing=False, random_indices=False) -> None:
+    def __init__(self, model, sparse_module, sparse_rate: float, exception=[], grad_acc=1, gradient_checkpointing=False, random_indices=False) -> None:
+        assert 0.0 <= sparse_rate <= 1.0, "sparse_rate should be a ratio between 0 and 1"
+
         self.model = model
         self.total_num = 0
         self.gradient_checkpointing = gradient_checkpointing

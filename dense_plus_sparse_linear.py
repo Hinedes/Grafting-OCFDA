@@ -50,8 +50,9 @@ class DensePlusSparseLinear(torch.autograd.Function):
 
 
 class SparseDenseLinear(nn.Module):
-    def __init__(self, base_layer, sparse_rate, indices=None):
+    def __init__(self, base_layer, sparse_rate: float, indices=None):
         super().__init__()
+        assert 0.0 <= sparse_rate <= 1.0, "sparse_rate should be a ratio between 0 and 1"
         self.weight = base_layer.weight
         self.bias = base_layer.bias
         self.num_elements = self.weight.numel()
@@ -78,7 +79,7 @@ class SparseDenseLinear(nn.Module):
         return DensePlusSparseLinear.apply(input, self.weight, self.indices, self.values, self.bias)
 
 
-def get_dense_plus_sparse_model(model, target_modules_list, sparse_rate, indices_choice="random", tokenizer=None, exception=[]):
+def get_dense_plus_sparse_model(model, target_modules_list, sparse_rate: float, indices_choice="random", tokenizer=None, exception=[]):
     if indices_choice == "super":
         assert tokenizer is not None, "`Super` option requires tokenizer to determine outliers indices."
         prepare_super_mask(model, tokenizer, dev=model.device, sparse_rate=sparse_rate)

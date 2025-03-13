@@ -9,12 +9,13 @@ from src.mask import prepare_super_mask
 class SparseDenseLoraLinear(nn.Module):
     def __init__(self,
                  base_layer,
-                 sparse_rate,
+                 sparse_rate: float,
                  r_lora: int = 4,
                  lora_alpha: int = 16,
                  lora_dropout: float = 0.05,
                  indices=None):
         super().__init__()
+        assert 0.0 <= sparse_rate <= 1.0, "sparse_rate should be a ratio between 0 and 1"
         self.weight = base_layer.weight
         self.bias = base_layer.bias
         self.num_elements = self.weight.numel()
@@ -68,7 +69,7 @@ class SparseDenseLoraLinear(nn.Module):
 
 def get_dense_plus_sparse_plus_lora_model(model,
                                           target_modules_list,
-                                          sparse_rate,
+                                          sparse_rate: float,
                                           r_lora: int = 4,
                                           lora_alpha: int = 16,
                                           lora_dropout: float = 0.05,
