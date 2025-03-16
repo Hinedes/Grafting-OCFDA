@@ -51,41 +51,38 @@ def main():
                              adapter_name=args.adapter_name,
                              random_indices=args.random_indices)
 
-    accuracy = eval_model(dataset_name=args.dataset, model=model, tokenizer=tokenizer)
+    average_score = 0.0
+    for dataset in args.datasets:
+        accuracy = eval_model(dataset_name=dataset, model=model, tokenizer=tokenizer)
+        average_score += accuracy
+        print(args.adapter_name + " accuracy on " + dataset + ":", accuracy)
+    average_score /= len(args.datasets)
 
-    print(args.adapter_name + " accuracy on " + args.dataset + ":", accuracy)
+    print("Average accuracy on all datasets:", average_score)
 
-    # lora  accuracy on SingleEq : 0.645669291338582  (0.3066344392108789) - r=8
-    # super accuracy on SingleEq : 0.681102362204724  (0.3066344392108789) - r=8
-
-    # supra accuracy on SingleEq : 0.612204724409448  (0.3066344392108789) - r_lora=6 r_super=2
-    # supra accuracy on SingleEq : 0.687007874015748  (0.3066344392108789) - r_lora=4 r_super=4
-    # supra accuracy on SingleEq : 0.704724409448818  (0.3066344392108789) - r_lora=3 r_super=5
-    # supra accuracy on SingleEq : 0.712598425196850  (0.3066344392108789) - r_lora=2 r_super=6
-    # supra accuracy on SingleEq : 0.667322834645669  (0.3066344392108789) - r_lora=1 r_super=7
 
 def parse_args():
     parser = argparse.ArgumentParser()
 
     # args for finetuning
     parser.add_argument('--base_model', default='meta-llama/Llama-3.2-1B')
-    parser.add_argument('--adapter_name', choices=['lora', 'AdapterP', 'AdapterH', 'Parallel', 'no', 'orig', 'super', 'supra'], default='supra')
+    parser.add_argument('--adapter_name', choices=['lora', 'AdapterP', 'AdapterH', 'Parallel', 'no', 'orig', 'super', 'supra'], default='lora')
     parser.add_argument('--random_indices', default=False)
     parser.add_argument('--target_modules', nargs='+', default=["q_proj", "k_proj", "v_proj", "up_proj", "down_proj"])
     parser.add_argument('--data_path', default='ft-training_set/math_10k.json')
     parser.add_argument('--r', default=8)
-    parser.add_argument('--eval_step', default=1000)
+    parser.add_argument('--eval_step', default=200)
     parser.add_argument('--batch_size', default=16)
     parser.add_argument('--micro_batch_size', default=16)
     parser.add_argument('--num_epochs', default=3)
-    parser.add_argument('--learning_rate', default=5e-5)
+    parser.add_argument('--learning_rate', default=2e-4)
     parser.add_argument('--cutoff_len', default=256)
     parser.add_argument('--val_set_size', default=120)
     parser.add_argument('--compile', default=0)
     parser.add_argument('--seed', default=0)
 
     # args for eval
-    parser.add_argument('--dataset', choices=['AddSub', 'MultiArith', 'SingleEq', 'gsm8k', 'AQuA', 'SVAMP'], default='SingleEq')
+    parser.add_argument('--datasets', default=['AddSub', 'MultiArith', 'SingleEq', 'gsm8k', 'AQuA', 'SVAMP'])
 
 
     return parser.parse_args()

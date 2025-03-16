@@ -37,9 +37,8 @@ from evaluate import eval_model
 def get_lists():
     #models = ['meta-llama/Llama-3.2-1B', 'meta-llama/Llama-3.2-3B', 'meta-llama/Llama-3.1-8B']
     models = ['meta-llama/Llama-3.2-1B']
-    #lrs = [5e-5, 1e-4, 2e-4, 5e-4]
-    lrs = [2e-4]
-    adapters = ['lora', 'sift-rand', 'sift-topk', 'super', 'supra-r1', 'supra-r2']
+    lrs = [5e-5, 1e-4, 2e-4, 5e-4]
+    adapters = ['lora', 'sift-rand', 'sift-topk', 'super-rand', 'super-wanda', 'supra-r1', 'supra-r2']
     datasets = ['AddSub', 'MultiArith', 'SingleEq', 'gsm8k', 'AQuA', 'SVAMP']
 
     return models, lrs, adapters, datasets
@@ -155,8 +154,9 @@ def construct_table(seed):
                     supra_lora_r = 2
 
                 model, tokenizer = train(base_model=model_name, data_path=data_path, target_modules=target_modules,
-                                         eval_step=1000, batch_size=16, micro_batch_size=16,
-                                         num_epochs=3, learning_rate=lr, cutoff_len=256,
+                                         eval_step=50, save_step=50, batch_size=16, micro_batch_size=16,
+                                         sparse_rate=0.005962171052631579, num_epochs=3, learning_rate=lr,
+                                         cutoff_len=256, output_dir="./checkpoints/" + adapter,
                                          val_set_size=120, compile=0, seed=seed, supra_lora_r=supra_lora_r,
                                          adapter_name=adapter.split('-', 1)[0], random_indices='rand' in adapter)
 
@@ -173,8 +173,8 @@ def construct_table(seed):
                 eval_table.loc[(lr, model_name, adapter), 'Average'] = average_score
                 eval_avg_table.loc[(lr, adapter), model_name] = average_score
 
-                save_table(eval_table, filename="eval_table", dir="out/" + str(adapter))
-                save_table(eval_avg_table, filename="eval_avg_table", dir="out/" + str(adapter))
+                save_table(eval_table, filename="eval_table")
+                save_table(eval_avg_table, filename="eval_avg_table")
 
 
 def parse_args():

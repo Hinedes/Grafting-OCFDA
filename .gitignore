@@ -8,3 +8,4 @@ fine_tuning/experiment/
 fine_tuning/lora-alpaca/
 fine_tuning/out/
 fine_tuning/trained_models/
+checkpoints/

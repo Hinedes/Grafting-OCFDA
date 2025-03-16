@@ -148,8 +148,7 @@ def construct_table(seed):
                                          eval_step=1000, batch_size=16, micro_batch_size=16,
                                          num_epochs=3, learning_rate=lr, cutoff_len=256,
                                          val_set_size=120, compile=0, seed=seed,
-                                         supra_lora_r=r_lora, supra_super_r=8-r_lora,
-                                         adapter_name='supra', random_indices=False)
+                                         supra_lora_r=r_lora, adapter_name='supra', random_indices=False)
 
                 name_to_acc = {task: 0 for task in datasets}
 
@@ -164,8 +163,8 @@ def construct_table(seed):
                 eval_table.loc[(lr, model_name, r_lora), 'Average'] = average_score
                 eval_avg_table.loc[lr, r_lora] = average_score
 
-                save_table(eval_table, filename="eval_table", dir="out/" + str(lr))
-                save_table(eval_avg_table, filename="eval_avg_table", dir="out/" + str(lr))
+                save_table(eval_table, filename="eval_table")
+                save_table(eval_avg_table, filename="eval_avg_table")
 
 
 def parse_args():
