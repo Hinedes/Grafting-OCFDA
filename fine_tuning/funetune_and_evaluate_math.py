@@ -66,12 +66,12 @@ def parse_args():
 
     # args for finetuning
     parser.add_argument('--base_model', default='meta-llama/Llama-3.2-1B')
-    parser.add_argument('--adapter_name', choices=['lora', 'AdapterP', 'AdapterH', 'Parallel', 'no', 'orig', 'super', 'supra'], default='lora')
+    parser.add_argument('--adapter_name', choices=['lora', 'AdapterP', 'AdapterH', 'Parallel', 'no', 'orig', 'super', 'supra'], default='supra')
     parser.add_argument('--random_indices', default=False)
     parser.add_argument('--target_modules', nargs='+', default=["q_proj", "k_proj", "v_proj", "up_proj", "down_proj"])
     parser.add_argument('--data_path', default='ft-training_set/math_10k.json')
     parser.add_argument('--r', default=8)
-    parser.add_argument('--eval_step', default=200)
+    parser.add_argument('--eval_step', default=50)
     parser.add_argument('--batch_size', default=16)
     parser.add_argument('--micro_batch_size', default=16)
     parser.add_argument('--num_epochs', default=3)
