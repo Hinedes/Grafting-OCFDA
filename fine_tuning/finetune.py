@@ -62,6 +62,7 @@ from SIFT.sift import SIFT
 from dense_plus_sparse_linear import get_dense_plus_sparse_model, get_sparse_dense_model_state_dict
 from dense_plus_sparse_linear_plus_lora import get_dense_plus_sparse_plus_lora_model, \
     get_sparse_dense_lora_model_state_dict
+from custom_lora import get_custom_lora_model, get_custom_lora_model_state_dict
 
 
 def compute_sparse_rate(model, target_modules):
@@ -110,6 +111,7 @@ def train(
         seed=0,
         # lora hyperparams
         lora_r: int = 8,
+        dynamic_r: bool = False,
         lora_params_ratio: float = 0.5,
         lora_alpha: int = 16,
         lora_dropout: float = 0.05,
@@ -361,6 +363,22 @@ def train(
         print('\n' * 3)
         print(model)
         print('\n' * 3)
+    elif adapter_name == "custom-lora":
+        model.seqlen = model.config.max_position_embeddings
+        model = get_custom_lora_model(
+            model,
+            r=lora_r,
+            dynamic_r=dynamic_r,
+            sparse_rate=sparse_rate,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            target_modules_list=target_modules,
+            tokenizer=tokenizer,
+            exception=sparse_exception,
+        )
+        print('\n' * 3)
+        print(model)
+        print('\n' * 3)
     elif adapter_name == "no":
         pass
     else:
@@ -473,6 +491,8 @@ def train(
         get_state_dict_func = get_sparse_dense_model_state_dict
     elif adapter_name == "supra":
         get_state_dict_func = get_sparse_dense_lora_model_state_dict
+    elif adapter_name == "custom-lora":
+        get_state_dict_func = get_custom_lora_model_state_dict
 
     if "sift" not in adapter_name:
         old_state_dict = model.state_dict
