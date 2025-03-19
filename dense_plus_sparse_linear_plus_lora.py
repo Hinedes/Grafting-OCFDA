@@ -10,22 +10,27 @@ class SparseDenseLoraLinear(nn.Module):
     def __init__(self,
                  base_layer,
                  sparse_rate: float,
-                 r_lora: int = 4,
+                 lora_params_ratio: float = 0.5,
                  lora_alpha: int = 16,
                  lora_dropout: float = 0.05,
                  indices=None):
         super().__init__()
         assert 0.0 <= sparse_rate <= 1.0, "sparse_rate should be a ratio between 0 and 1"
+        assert 0.0 <= lora_params_ratio <= 1.0, "lora_params_ratio should be a ratio between 0 and 1"
+
         self.weight = base_layer.weight
         self.bias = base_layer.bias
         self.num_elements = self.weight.numel()
 
         in_features, out_features = self.weight.shape
 
-        #super_params = (out_features + in_features) * r_super
+        params_selected_for_lora = math.ceil(lora_params_ratio * sparse_rate * self.weight.numel())
 
+        r_lora = params_selected_for_lora // (out_features + in_features)
         lora_params = (out_features + in_features) * r_lora
-        super_params = max(0, min(int(sparse_rate * self.weight.numel()) + 1, self.weight.numel()) - lora_params)
+
+        #super_params = (out_features + in_features) * r_super
+        super_params = int(sparse_rate * self.weight.numel()) - lora_params
 
         print("lora_params = ", lora_params)
         print("super_params = ", super_params)
@@ -70,7 +75,7 @@ class SparseDenseLoraLinear(nn.Module):
 def get_dense_plus_sparse_plus_lora_model(model,
                                           target_modules_list,
                                           sparse_rate: float,
-                                          r_lora: int = 4,
+                                          lora_params_ratio: float = 0.5,
                                           lora_alpha: int = 16,
                                           lora_dropout: float = 0.05,
                                           indices_choice="random",
@@ -92,7 +97,7 @@ def get_dense_plus_sparse_plus_lora_model(model,
         indices = getattr(old_module.weight, "wanda_topk_indices", None)
         new_module = SparseDenseLoraLinear(old_module,
                                            sparse_rate=sparse_rate,
-                                           r_lora=r_lora,
+                                           lora_params_ratio=lora_params_ratio,
                                            lora_alpha=lora_alpha,
                                            lora_dropout=lora_dropout,
                                            indices=indices)

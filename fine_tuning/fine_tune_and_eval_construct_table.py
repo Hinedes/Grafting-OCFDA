@@ -35,10 +35,9 @@ from evaluate import eval_model
 
 
 def get_lists():
-    #models = ['meta-llama/Llama-3.2-1B', 'meta-llama/Llama-3.2-3B', 'meta-llama/Llama-3.1-8B']
-    models = ['meta-llama/Llama-3.2-1B']
+    models = ['meta-llama/Llama-3.2-1B', 'meta-llama/Llama-3.2-3B', 'meta-llama/Llama-3.1-8B']
     lrs = [5e-5, 1e-4, 2e-4, 5e-4]
-    adapters = ['lora', 'sift-rand', 'sift-topk', 'super-rand', 'super-wanda', 'supra-r1', 'supra-r2']
+    adapters = ['lora', 'sift-rand', 'sift-topk', 'super-rand', 'super-wanda', 'supra-0.2', 'supra-0.5', 'supra-0.8']
     datasets = ['AddSub', 'MultiArith', 'SingleEq', 'gsm8k', 'AQuA', 'SVAMP']
 
     return models, lrs, adapters, datasets
@@ -129,6 +128,16 @@ def construct_table(seed):
     target_modules = ["q_proj", "k_proj", "v_proj", "up_proj", "down_proj"]
     data_path = 'ft-training_set/math_10k.json'
 
+    # TODO: replace it with the call of compute_sparse_rate(lora_adapter_model) function from finetune.py
+    sparse_rates = {
+        'meta-llama/Llama-3.2-1B': 0.005962171052631579,
+        'meta-llama/Llama-3.2-3B': 0.004464285714285714,
+        'meta-llama/Llama-3.1-8B': 0.0031020220588235292,
+        'meta-llama/Meta-Llama-3-8B': 0.0031020220588235292,
+    }
+
+    # TODO: add authomatic computation of sparse_rate
+
     eval_table = load_table("eval_table")
     eval_avg_table = load_table("eval_avg_table")
     if eval_table is None:
@@ -137,6 +146,8 @@ def construct_table(seed):
         eval_avg_table = create_initial_eval_avg_table()
 
     for model_name in models:
+        sparse_rate = sparse_rates[model_name]
+
         for lr in lrs:
             for adapter in adapters:
 
@@ -147,17 +158,16 @@ def construct_table(seed):
                     print("Already computed...")
                     continue
 
-                supra_lora_r=0
-                if "r1" in adapter:
-                    supra_lora_r = 1
-                if "r2" in adapter:
-                    supra_lora_r = 2
+                lora_params_ratio = 0.5
+                adapter_sec_name = adapter.split('-', 1)[1]
+                if adapter_sec_name != '':
+                    lora_params_ratio = float(adapter_sec_name)
 
                 model, tokenizer = train(base_model=model_name, data_path=data_path, target_modules=target_modules,
                                          eval_step=50, save_step=50, batch_size=16, micro_batch_size=16,
-                                         sparse_rate=0.005962171052631579, num_epochs=3, learning_rate=lr,
+                                         sparse_rate=sparse_rate, num_epochs=3, learning_rate=lr,
                                          cutoff_len=256, output_dir="./checkpoints/" + adapter,
-                                         val_set_size=120, compile=0, seed=seed, supra_lora_r=supra_lora_r,
+                                         val_set_size=120, compile=0, seed=seed, lora_params_ratio=lora_params_ratio,
                                          adapter_name=adapter.split('-', 1)[0], random_indices='rand' in adapter)
 
                 name_to_acc = {task: 0 for task in datasets}

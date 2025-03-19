@@ -84,6 +84,8 @@ def parse_args():
     # args for eval
     parser.add_argument('--datasets', default=['AddSub', 'MultiArith', 'SingleEq', 'gsm8k', 'AQuA', 'SVAMP'])
 
+    #  Lora with regular r   :  52.95397674112964
+    #  Lora with sparse rate :  53.97069887843707
 
     return parser.parse_args()
 

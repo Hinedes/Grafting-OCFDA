@@ -36,19 +36,19 @@ from evaluate import eval_model
 def get_lists():
     models = ['meta-llama/Llama-3.2-1B']
     lrs = [5e-5, 1e-4, 2e-4, 5e-4]
-    r_loras = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    lora_params_ratios = np.arange(0, 1.1, 0.1).tolist()
     datasets = ['AddSub', 'MultiArith', 'SingleEq', 'gsm8k', 'AQuA', 'SVAMP']
 
-    return models, lrs, r_loras, datasets
+    return models, lrs, lora_params_ratios, datasets
 
 
 def create_initial_eval_table():
-    models, lrs, r_loras, datasets = get_lists()
+    models, lrs, lora_params_ratios, datasets = get_lists()
 
     datasets.append('Average')
 
     # Create a MultiIndex for rows with sparsity, methods, and tasks
-    index = pd.MultiIndex.from_product([lrs, models, r_loras], names=['lr', 'Model', 'lora r'])
+    index = pd.MultiIndex.from_product([lrs, models, lora_params_ratios], names=['lr', 'Model', 'lora rate'])
 
     # Create an empty DataFrame with sparsity, methods, and tasks as rows and models as columns
     df = pd.DataFrame(index=index, columns=datasets)
@@ -57,13 +57,13 @@ def create_initial_eval_table():
 
 
 def create_initial_eval_avg_table():
-    models, lrs, r_loras, _ = get_lists()
+    models, lrs, lora_params_ratios, _ = get_lists()
 
     # Create a MultiIndex for rows with methods and sparsity
     index = pd.MultiIndex.from_product([lrs], names=['lr'])
 
     # Create an empty DataFrame with methods and sparsity as rows and models as columns
-    df = pd.DataFrame(index=index, columns=r_loras)
+    df = pd.DataFrame(index=index, columns=lora_params_ratios)
 
     return df
 
@@ -122,10 +122,18 @@ def construct_table(seed):
     print('accelerate', version('accelerate'))
     print('# of gpus: ', torch.cuda.device_count())
 
-    models, lrs, r_loras, datasets = get_lists()
+    models, lrs, lora_params_ratios, datasets = get_lists()
 
     target_modules = ["q_proj", "k_proj", "v_proj", "up_proj", "down_proj"]
     data_path = 'ft-training_set/math_10k.json'
+
+    # TODO: replace it with the call of compute_sparse_rate(lora_adapter_model) function from finetune.py
+    sparse_rates = {
+        'meta-llama/Llama-3.2-1B': 0.005962171052631579,
+        'meta-llama/Llama-3.2-3B': 0.004464285714285714,
+        'meta-llama/Llama-3.1-8B': 0.0031020220588235292,
+        'meta-llama/Meta-Llama-3-8B': 0.0031020220588235292,
+    }
 
     eval_table = load_table("eval_table")
     eval_avg_table = load_table("eval_avg_table")
@@ -135,20 +143,23 @@ def construct_table(seed):
         eval_avg_table = create_initial_eval_avg_table()
 
     for model_name in models:
+        sparse_rate = sparse_rates[model_name]
+
         for lr in lrs:
-            for r_lora in r_loras:
+            for lora_params_ratio in lora_params_ratios:
                 set_seed(seed)
 
-                print("Model: " + model_name + " lr = " + str(lr) + " adapter: supra-wanda r_lora = " + str(r_lora))
+                print("Model: " + model_name + " lr = " + str(lr) + " adapter: supra-wanda lora_params_ratio = " + str(lora_params_ratio))
                 #if pd.notna(eval_avg_table.loc[lr, r_lora]):
                 #    print("Already computed...")
                 #    continue
 
                 model, tokenizer = train(base_model=model_name, data_path=data_path, target_modules=target_modules,
-                                         eval_step=1000, batch_size=16, micro_batch_size=16,
+                                         eval_step=50, batch_size=16, micro_batch_size=16,
                                          num_epochs=3, learning_rate=lr, cutoff_len=256,
                                          val_set_size=120, compile=0, seed=seed,
-                                         supra_lora_r=r_lora, adapter_name='supra', random_indices=False)
+                                         lora_params_ratio=lora_params_ratio, adapter_name='supra',
+                                         random_indices=False, sparse_rate=sparse_rate)
 
                 name_to_acc = {task: 0 for task in datasets}
 
@@ -157,11 +168,11 @@ def construct_table(seed):
                     print(dataset + " accuracy: " + str(accuracy) + "%")
 
                     name_to_acc[dataset] = accuracy
-                    eval_table.loc[(lr, model_name, r_lora), dataset] = accuracy
+                    eval_table.loc[(lr, model_name, lora_params_ratio), dataset] = accuracy
 
                 average_score = sum(name_to_acc.values()) / len(name_to_acc)
-                eval_table.loc[(lr, model_name, r_lora), 'Average'] = average_score
-                eval_avg_table.loc[lr, r_lora] = average_score
+                eval_table.loc[(lr, model_name, lora_params_ratio), 'Average'] = average_score
+                eval_avg_table.loc[lr, lora_params_ratio] = average_score
 
                 save_table(eval_table, filename="eval_table")
                 save_table(eval_avg_table, filename="eval_avg_table")

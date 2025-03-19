@@ -110,7 +110,7 @@ def train(
         seed=0,
         # lora hyperparams
         lora_r: int = 8,
-        supra_lora_r: int = 2,
+        lora_params_ratio: float = 0.5,
         lora_alpha: int = 16,
         lora_dropout: float = 0.05,
         lora_target_modules: List[str] = None,
@@ -349,7 +349,7 @@ def train(
         model.seqlen = model.config.max_position_embeddings
         model = get_dense_plus_sparse_plus_lora_model(
             model,
-            r_lora=supra_lora_r,
+            lora_params_ratio=lora_params_ratio,
             sparse_rate=sparse_rate,
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
