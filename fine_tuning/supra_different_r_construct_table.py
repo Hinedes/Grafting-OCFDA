@@ -150,12 +150,12 @@ def construct_table(seed):
                 set_seed(seed)
 
                 print("Model: " + model_name + " lr = " + str(lr) + " adapter: supra-wanda lora_params_ratio = " + str(lora_params_ratio))
-                #if pd.notna(eval_avg_table.loc[lr, r_lora]):
-                #    print("Already computed...")
-                #    continue
+                if pd.notna(eval_avg_table.loc[lr, lora_params_ratio]):
+                    print("Already computed...")
+                    continue
 
                 model, tokenizer = train(base_model=model_name, data_path=data_path, target_modules=target_modules,
-                                         eval_step=50, batch_size=16, micro_batch_size=16,
+                                         eval_step=50, save_step=50, batch_size=16, micro_batch_size=16,
                                          num_epochs=3, learning_rate=lr, cutoff_len=256,
                                          val_set_size=120, compile=0, seed=seed,
                                          lora_params_ratio=lora_params_ratio, adapter_name='supra',

@@ -24,9 +24,9 @@ class SparseDenseLoraLinear(nn.Module):
 
         in_features, out_features = self.weight.shape
 
-        params_selected_for_lora = math.ceil(lora_params_ratio * sparse_rate * self.weight.numel())
-
-        r_lora = params_selected_for_lora // (out_features + in_features)
+        #params_selected_for_lora = math.ceil(lora_params_ratio * sparse_rate * self.weight.numel())
+        #r_lora = params_selected_for_lora // (out_features + in_features)
+        r_lora = math.ceil(lora_params_ratio * sparse_rate * self.weight.numel() / (out_features + in_features))
         lora_params = (out_features + in_features) * r_lora
 
         #super_params = (out_features + in_features) * r_super
