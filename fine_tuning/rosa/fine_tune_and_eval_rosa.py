@@ -29,15 +29,14 @@ import numpy as np
 
 from importlib.metadata import version
 
-from finetune import train
-from evaluate import eval_model
-
+from finetune_rosa import train
+from rosa.evaluate_rosa import eval_model
 
 
 def get_lists():
     models = ['meta-llama/Llama-3.2-1B', 'meta-llama/Llama-3.2-3B', 'meta-llama/Llama-3.1-8B']
     lrs = [5e-5, 1e-4, 2e-4, 5e-4]
-    adapters = ['lora', 'sift-rand', 'sift-topk', 'super-rand', 'super-wanda', 'supra-0.2', 'supra-0.5', 'supra-0.8']
+    adapters = ['rosa']
     datasets = ['AddSub', 'MultiArith', 'SingleEq', 'gsm8k', 'AQuA', 'SVAMP']
 
     return models, lrs, adapters, datasets
@@ -126,7 +125,7 @@ def construct_table(seed):
     models, lrs, adapters, datasets = get_lists()
 
     target_modules = ["q_proj", "k_proj", "v_proj", "up_proj", "down_proj"]
-    data_path = 'ft-training_set/math_10k.json'
+    data_path = '../ft-training_set/math_10k.json'
 
     # TODO: replace it with the call of compute_sparse_rate(lora_adapter_model) function from finetune.py
     sparse_rates = {
@@ -164,10 +163,10 @@ def construct_table(seed):
 
                 model, tokenizer = train(base_model=model_name, data_path=data_path, target_modules=target_modules,
                                          eval_step=50, save_step=50, batch_size=16, micro_batch_size=16,
-                                         sparse_rate=sparse_rate, num_epochs=3, learning_rate=lr,
+                                         sparse_rate=sparse_rate/2, lora_r=4, num_epochs=3, learning_rate=lr,
                                          cutoff_len=256, output_dir="./checkpoints/" + adapter,
                                          val_set_size=120, compile=0, seed=seed, lora_params_ratio=lora_params_ratio,
-                                         adapter_name=adapter.split('-', 1)[0], random_indices='rand' in adapter)
+                                         adapter_name=adapter, random_indices='rand' in adapter)
 
                 name_to_acc = {task: 0 for task in datasets}
 
@@ -182,8 +181,8 @@ def construct_table(seed):
                 eval_table.loc[(lr, model_name, adapter), 'Average'] = average_score
                 eval_avg_table.loc[(lr, adapter), model_name] = average_score
 
-                save_table(eval_table, filename="eval_table")
-                save_table(eval_avg_table, filename="eval_avg_table")
+                save_table(eval_table, filename="rosa_eval_table")
+                save_table(eval_avg_table, filename="rosa_eval_avg_table")
 
 
 def parse_args():
@@ -199,7 +198,6 @@ if __name__ == "__main__":
     #eval_table = load_table("eval_table")
     #eval_avg_table = load_table("eval_avg_table")
     #print_latex_table(eval_table)
+    #a = 0
 
-    a = 0
-
-    #construct_table(args.seed)
+    construct_table(args.seed)
