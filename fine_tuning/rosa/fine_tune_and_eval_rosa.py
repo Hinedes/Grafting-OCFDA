@@ -112,7 +112,8 @@ def set_seed(seed):
     torch.random.manual_seed(seed)
 
 
-def construct_table(seed):
+def construct_table(args):
+    seed = args.seed
     print("CUDA Available:", torch.cuda.is_available())
     for __i in range(torch.cuda.device_count()):
         print(f"GPU {__i}: {torch.cuda.get_device_name(__i)}")
@@ -147,47 +148,50 @@ def construct_table(seed):
     for model_name in models:
         sparse_rate = sparse_rates[model_name]
 
-        for lr in lrs:
-            for adapter in adapters:
+        lr = args.learning_rate
 
-                set_seed(seed)
+        for adapter in adapters:
 
-                print("Model: " + model_name + " lr = " + str(lr) + " adapter: " + adapter)
-                if pd.notna(eval_avg_table.loc[(lr, adapter), model_name]):
-                    print("Already computed...")
-                    continue
+            set_seed(seed)
 
-                lora_params_ratio = 0.5
-                if adapter.split('-')[0] == 'supra':
-                    lora_params_ratio = float(adapter.split('-')[1])
+            print("Model: " + model_name + " lr = " + str(lr) + " seed = " + str(seed) + " adapter: " + adapter)
+            if pd.notna(eval_avg_table.loc[(lr, adapter), model_name]):
+                print("Already computed...")
+                continue
 
-                model, tokenizer = train(base_model=model_name, data_path=data_path, target_modules=target_modules,
-                                         eval_step=50, save_step=50, batch_size=16, micro_batch_size=16,
-                                         sparse_rate=sparse_rate/2, lora_r=4, num_epochs=3, learning_rate=lr,
-                                         cutoff_len=256, output_dir="./checkpoints/" + adapter,
-                                         val_set_size=120, compile=0, seed=seed, lora_params_ratio=lora_params_ratio,
-                                         adapter_name=adapter, random_indices='rand' in adapter)
+            lora_params_ratio = 0.5
+            if adapter.split('-')[0] == 'supra':
+                lora_params_ratio = float(adapter.split('-')[1])
 
-                name_to_acc = {task: 0 for task in datasets}
+            model, tokenizer = train(base_model=model_name, data_path=data_path, target_modules=target_modules,
+                                        eval_step=100, save_step=100, batch_size=16, micro_batch_size=16,
+                                        sparse_rate=sparse_rate/2, lora_r=4, num_epochs=3, learning_rate=lr,
+                                        cutoff_len=256, output_dir="./checkpoints/" + adapter,
+                                        val_set_size=120, compile=0, seed=seed, lora_params_ratio=lora_params_ratio,
+                                        adapter_name=adapter, random_indices='rand' in adapter,
+                                        )
 
-                for dataset in datasets:
-                    accuracy = eval_model(dataset_name=dataset, model=model, tokenizer=tokenizer) * 100
-                    print(dataset + " accuracy: " + str(accuracy) + "%")
+            name_to_acc = {task: 0 for task in datasets}
 
-                    name_to_acc[dataset] = accuracy
-                    eval_table.loc[(lr, model_name, adapter), dataset] = accuracy
+            for dataset in datasets:
+                accuracy = eval_model(dataset_name=dataset, model=model, tokenizer=tokenizer) * 100
+                print(dataset + " accuracy: " + str(accuracy) + "%")
 
-                average_score = sum(name_to_acc.values()) / len(name_to_acc)
-                eval_table.loc[(lr, model_name, adapter), 'Average'] = average_score
-                eval_avg_table.loc[(lr, adapter), model_name] = average_score
+                name_to_acc[dataset] = accuracy
+                eval_table.loc[(lr, model_name, adapter), dataset] = accuracy
 
-                save_table(eval_table, filename="rosa_eval_table")
-                save_table(eval_avg_table, filename="rosa_eval_avg_table")
+            average_score = sum(name_to_acc.values()) / len(name_to_acc)
+            eval_table.loc[(lr, model_name, adapter), 'Average'] = average_score
+            eval_avg_table.loc[(lr, adapter), model_name] = average_score
+
+            save_table(eval_table, filename="rosa_eval_table")
+            save_table(eval_avg_table, filename="rosa_eval_avg_table")
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--learning_rate', type=float, default=1e-4)
 
     return parser.parse_args()
 
@@ -200,4 +204,4 @@ if __name__ == "__main__":
     #print_latex_table(eval_table)
     #a = 0
 
-    construct_table(args.seed)
+    construct_table(args)

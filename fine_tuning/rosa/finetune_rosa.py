@@ -40,7 +40,7 @@ import torch.nn as nn
 import bitsandbytes as bnb
 """
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PEFT_PATH = os.path.abspath(os.path.join(os.getcwd(), "peft/src/"))
 
 sys.path.insert(0, PEFT_PATH)
