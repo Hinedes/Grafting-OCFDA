@@ -50,8 +50,21 @@ def find_layers(block, layers=[nn.Linear], name=''):
 
 
 @torch.no_grad()
-def prepare_super_mask(model, tokenizer, dev, sparse_rate, nsamples=128, seed=228):
-    dataloader, _ = get_loaders("c4", nsamples, seed=seed, seqlen=model.seqlen, tokenizer=tokenizer)
+def prepare_super_mask(
+        model,
+        tokenizer,
+        dev,
+        sparse_rate=None,
+        nsamples=128,
+        seed=228,
+        calibration_data="c4",
+        outliers_ratio=None,
+):
+    if sparse_rate is None:
+        sparse_rate = outliers_ratio
+    if sparse_rate is None:
+        raise ValueError("prepare_super_mask requires sparse_rate or outliers_ratio.")
+    dataloader, _ = get_loaders(calibration_data, nsamples, seed=seed, seqlen=model.seqlen, tokenizer=tokenizer)
 
     use_cache = model.config.use_cache
     model.config.use_cache = False

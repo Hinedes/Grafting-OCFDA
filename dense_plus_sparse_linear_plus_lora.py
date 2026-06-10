@@ -80,12 +80,23 @@ def get_dense_plus_sparse_plus_lora_model(model,
                                           lora_dropout: float = 0.05,
                                           indices_choice="random",
                                           tokenizer=None,
-                                          exception=None):
+                                          exception=None,
+                                          calibration_data="c4",
+                                          calibration_nsamples=128,
+                                          calibration_seed=228):
     if exception is None:
         exception = []
     if indices_choice == "super":
         assert tokenizer is not None, "`Super` option requires tokenizer to determine outliers indices."
-        prepare_super_mask(model, tokenizer, dev=model.device, sparse_rate=sparse_rate)
+        prepare_super_mask(
+            model,
+            tokenizer,
+            dev=model.device,
+            sparse_rate=sparse_rate,
+            nsamples=calibration_nsamples,
+            seed=calibration_seed,
+            calibration_data=calibration_data,
+        )
 
     def _get_submodules(key):
         parent = model.get_submodule(".".join(key.split(".")[:-1]))

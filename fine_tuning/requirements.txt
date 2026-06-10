@@ -5,6 +5,8 @@ black
 black[jupyter]
 datasets
 fire
+pandas
+wandb
 transformers
 gradio
 torch

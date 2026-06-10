@@ -32,8 +32,6 @@ import os
 from transformers import AutoModelForCausalLM, AutoTokenizer, LlamaTokenizer, AutoModel, Trainer  # noqa: F402
 from transformers.trainer_utils import get_last_checkpoint
 
-from rosa_adapter import get_rosa_model, get_rosa_model_state_dict
-
 """
 Unused imports:
 import torch.nn as nn
@@ -53,6 +51,9 @@ from peft import (
     get_peft_model_state_dict,
     set_peft_model_state_dict,
 )
+
+from rosa_adapter import get_rosa_model, get_rosa_model_state_dict
+from rosa.rosa.scheduler import RosaScheduler
 
 from src.super import Super
 
@@ -108,6 +109,7 @@ def train(
         load_from_checkpoints: bool = False,
         eval_step: int = 50,
         save_step: int = 50,
+        val_split_seed: int = 42,
         seed=0,
         # rosa hyperparams
         lora_r: int = 8,
@@ -163,6 +165,7 @@ def train(
         f"weight_decay: {weight_decay}\n"
         f"cutoff_len: {cutoff_len}\n"
         f"val_set_size: {val_set_size}\n"
+        f"val_split_seed: {val_split_seed}\n"
         f"use_gradient_checkpointing: {use_gradient_checkpointing}\n"
         f"lora_r: {lora_r}\n"
         f"lora_alpha: {lora_alpha}\n"
@@ -299,7 +302,7 @@ def train(
         model.seqlen = model.config.max_position_embeddings
         model = get_rosa_model(
             model,
-            target_modules=["q_proj", "k_proj", "v_proj", "up_proj", "down_proj"],
+            target_modules=target_modules,
             r=lora_r,
             d=sparse_rate,
             alpha=lora_alpha,
@@ -309,17 +312,26 @@ def train(
         print('\n' * 3)
         print(model)
         print('\n' * 3)
+        rosa_scheduler = RosaScheduler(model)
+    else:
+        rosa_scheduler = None
 
     num_trainable, num_non_trainable, sp_rate = compute_sparse_rate(model=model, target_modules=target_modules)
     print("Initial number of parameters (non trainable):", num_non_trainable)
     print("Number of trainable params:", num_trainable)
     print("Sparse_rate =", sp_rate)
 
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    optimizer_trainable_params = sum(p.numel() for p in trainable_params)
+    requires_grad_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    model.optimizer_trainable_params = optimizer_trainable_params
+    model.requires_grad_trainable_params = requires_grad_trainable_params
+    print("Optimizer trainable params:", optimizer_trainable_params)
+    print("Requires-grad params:", requires_grad_trainable_params)
+
     if optimizer_name.lower() == "adam":
-        trainable_params = [p for p in model.parameters() if p.requires_grad]
         optimizer = torch.optim.Adam(trainable_params, lr=learning_rate, weight_decay=weight_decay)
     elif optimizer_name.lower() == "adamw":
-        trainable_params = [p for p in model.parameters() if p.requires_grad]
         optimizer = torch.optim.AdamW(trainable_params, lr=learning_rate, weight_decay=weight_decay)
     else:
         raise ValueError("wrong optimizer name.")
@@ -347,7 +359,7 @@ def train(
 
     if val_set_size > 0:
         train_val = data["train"].train_test_split(
-            test_size=val_set_size, shuffle=True, seed=42
+            test_size=val_set_size, shuffle=True, seed=val_split_seed
         )
         train_data = (
             train_val["train"].shuffle().map(generate_and_tokenize_prompt)
@@ -371,6 +383,7 @@ def train(
         train_dataset=train_data,
         eval_dataset=val_data,
         optimizers=(optimizer, None),
+        callbacks=[rosa_scheduler] if rosa_scheduler is not None else None,
         args=transformers.TrainingArguments(
             per_device_train_batch_size=micro_batch_size,
             per_device_eval_batch_size=micro_batch_size,

@@ -96,6 +96,9 @@ def train(
         adapter_name: str = "lora",
         load_8bit: bool = False,
         sparse_rate=0.005962171052631579,
+        calibration_data: str = "c4",
+        calibration_nsamples: int = 128,
+        calibration_seed: int = 228,
         # training hyperparams
         batch_size: int = 128,
         micro_batch_size: int = 4,
@@ -108,6 +111,7 @@ def train(
         load_from_checkpoints: bool = False,
         eval_step: int = 50,
         save_step: int = 50,
+        val_split_seed: int = 42,
         seed=0,
         # lora hyperparams
         lora_r: int = 8,
@@ -163,6 +167,7 @@ def train(
         f"weight_decay: {weight_decay}\n"
         f"cutoff_len: {cutoff_len}\n"
         f"val_set_size: {val_set_size}\n"
+        f"val_split_seed: {val_split_seed}\n"
         f"use_gradient_checkpointing: {use_gradient_checkpointing}\n"
         f"lora_r: {lora_r}\n"
         f"lora_alpha: {lora_alpha}\n"
@@ -190,6 +195,9 @@ def train(
         f"max_steps: {max_steps}\n"
         f"sparse_exception: {sparse_exception}\n"
         f"random_indices: {random_indices}\n"
+        f"calibration_data: {calibration_data}\n"
+        f"calibration_nsamples: {calibration_nsamples}\n"
+        f"calibration_seed: {calibration_seed}\n"
         f"seed: {seed}\n"
     )
     assert (
@@ -322,6 +330,7 @@ def train(
         )
     torch.manual_seed(seed)
 
+    sift = None
     if adapter_name not in ["sift", "super", "no", "supra"]:
         model = get_peft_model(model, config)
         model.print_trainable_parameters()  # Be more transparent about the % of trainable params.
@@ -343,6 +352,9 @@ def train(
             indices_choice="random" if random_indices else "super",
             tokenizer=tokenizer,
             exception=sparse_exception,
+            calibration_data=calibration_data,
+            calibration_nsamples=calibration_nsamples,
+            calibration_seed=calibration_seed,
         )
         print('\n' * 3)
         print(model)
@@ -359,6 +371,9 @@ def train(
             indices_choice="random" if random_indices else "super",
             tokenizer=tokenizer,
             exception=sparse_exception,
+            calibration_data=calibration_data,
+            calibration_nsamples=calibration_nsamples,
+            calibration_seed=calibration_seed,
         )
         print('\n' * 3)
         print(model)
@@ -392,11 +407,20 @@ def train(
     print("Number of trainable params:", num_trainable)
     print("Sparse_rate =", sp_rate)
 
-    if optimizer_name.lower() == "adam":
+    if adapter_name == "sift" and sift is not None:
+        trainable_params = list(sift.parameters_in_optimizer())
+    else:
         trainable_params = [p for p in model.parameters() if p.requires_grad]
+    optimizer_trainable_params = sum(p.numel() for p in trainable_params)
+    requires_grad_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    model.optimizer_trainable_params = optimizer_trainable_params
+    model.requires_grad_trainable_params = requires_grad_trainable_params
+    print("Optimizer trainable params:", optimizer_trainable_params)
+    print("Requires-grad params:", requires_grad_trainable_params)
+
+    if optimizer_name.lower() == "adam":
         optimizer = torch.optim.Adam(trainable_params, lr=learning_rate, weight_decay=weight_decay)
     elif optimizer_name.lower() == "adamw":
-        trainable_params = [p for p in model.parameters() if p.requires_grad]
         optimizer = torch.optim.AdamW(trainable_params, lr=learning_rate, weight_decay=weight_decay)
     else:
         raise ValueError("wrong optimizer name.")
@@ -424,7 +448,7 @@ def train(
 
     if val_set_size > 0:
         train_val = data["train"].train_test_split(
-            test_size=val_set_size, shuffle=True, seed=42
+            test_size=val_set_size, shuffle=True, seed=val_split_seed
         )
         train_data = (
             train_val["train"].shuffle().map(generate_and_tokenize_prompt)

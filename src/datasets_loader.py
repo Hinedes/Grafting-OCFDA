@@ -4,6 +4,8 @@ import numpy as np
 import random
 import torch
 import os
+import json
+import hashlib
 
 from datasets import load_dataset
 
@@ -87,11 +89,61 @@ def get_c4(nsamples, seed, seqlen, tokenizer):
     return trainloader, valenc
 
 
+def render_instruction_record(record):
+    instruction = str(record.get("instruction", ""))
+    input_text = str(record.get("input", ""))
+    output = str(record.get("output", ""))
+
+    if input_text:
+        return (
+            "Below is an instruction that describes a task, paired with an input that provides further context. "
+            "Write a response that appropriately completes the request.\n\n"
+            f"### Instruction:\n{instruction}\n\n"
+            f"### Input:\n{input_text}\n\n"
+            f"### Response:\n{output}"
+        )
+    return (
+        "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n"
+        f"### Instruction:\n{instruction}\n\n"
+        f"### Response:\n{output}"
+    )
+
+
+def get_json_instruction_calibration(path, nsamples, seed, seqlen, tokenizer):
+    with open(path, "r") as f:
+        records = json.load(f)
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.random.manual_seed(seed)
+
+    seqlen = min(2048, seqlen)
+    texts = [render_instruction_record(record) for record in records]
+    text = "\n\n".join(texts)
+    trainenc = tokenizer(text, return_tensors="pt")
+
+    while trainenc.input_ids.shape[1] <= seqlen + 1:
+        text = text + "\n\n" + text
+        trainenc = tokenizer(text, return_tensors="pt")
+
+    trainloader = []
+    for _ in range(nsamples):
+        i = random.randint(0, trainenc.input_ids.shape[1] - seqlen - 1)
+        j = i + seqlen
+        inp = trainenc.input_ids[:, i:j]
+        tar = inp.clone()
+        tar[:, :-1] = -100
+        trainloader.append((inp, tar))
+
+    return trainloader, TokenizerWrapper(trainenc.input_ids)
+
+
 # Function to select the appropriate loader based on dataset name
 def get_loaders(name, nsamples=128, seed=0, seqlen=2048, tokenizer=None):
 
     cache_dir = "loaders_cache"
-    name_cache_dir = name + "_nsamples_" + str(nsamples) + "_seed_" + str(seed) + "_" + tokenizer.name_or_path.split('/')[-1]
+    cache_key = hashlib.md5(os.path.abspath(name).encode()).hexdigest()[:10] if os.path.exists(name) else name
+    name_cache_dir = cache_key + "_nsamples_" + str(nsamples) + "_seed_" + str(seed) + "_" + tokenizer.name_or_path.split('/')[-1]
 
     if not os.path.exists(cache_dir):
         os.makedirs(cache_dir)
@@ -111,6 +163,10 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, tokenizer=None):
                 train_loader, test_loader = get_wikitext2(nsamples, seed, seqlen, tokenizer)
             case 'c4':
                 train_loader, test_loader = get_c4(nsamples, seed, seqlen, tokenizer)
+            case _ if os.path.exists(name) and name.endswith(".json"):
+                train_loader, test_loader = get_json_instruction_calibration(name, nsamples, seed, seqlen, tokenizer)
+            case _:
+                raise ValueError(f"Unsupported calibration dataset for get_loaders: {name}")
 
         os.makedirs(full_cache_dir, exist_ok=True)
 
