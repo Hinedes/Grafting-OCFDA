@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import torch
 from importlib.metadata import version
-from transformers import AutoConfig
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -38,7 +38,7 @@ FULL_LLAMA_TARGET_MODULES = [
 
 LEGACY_TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "up_proj", "down_proj"]
 MATH_BENCHMARKS = ["AddSub", "MultiArith", "SingleEq", "gsm8k", "AQuA", "SVAMP"]
-DEFAULT_METHODS = "lora,super-wanda,super-rand,supra-0.3,supra-0.5,supra-0.8,sift-topk,sift-rand,rosa"
+DEFAULT_METHODS = "base,lora,super-wanda,super-rand,supra-0.3,supra-0.5,supra-0.8,sift-topk,sift-rand,rosa"
 DEFAULT_LRS = "5e-5,1e-4,5e-4,1e-3,5e-3,1e-2,5e-2,1e-1"
 
 
@@ -335,6 +335,8 @@ def supra_param_count(
 
 
 def parse_method(method: str) -> Tuple[str, bool, float]:
+    if method == "base":
+        return "base", False, 0.0
     if method == "lora":
         return "lora", False, 0.0
     if method == "rosa":
@@ -365,7 +367,11 @@ def build_budget_plan(args, spec: RunSpec, target_modules: List[str]) -> dict:
     train_lora_r = spec.lora_r
     component_lora_ratio = None
 
-    if adapter_name == "lora":
+    if adapter_name == "base":
+        train_sparse_rate = 0.0
+        train_lora_r = 0
+        adapter_params = 0
+    elif adapter_name == "lora":
         train_sparse_rate = 0.0
         adapter_params = reference_lora_params
     elif adapter_name in {"super", "sift"}:
@@ -383,11 +389,13 @@ def build_budget_plan(args, spec: RunSpec, target_modules: List[str]) -> dict:
     else:
         raise ValueError(f"Unsupported adapter for budget planning: {adapter_name}")
 
-    if reference_lora_params == 0:
+    if adapter_name == "base":
+        budget_error_pct = 0.0
+    elif reference_lora_params == 0:
         budget_error_pct = 0.0
     else:
         budget_error_pct = 100.0 * (adapter_params - reference_lora_params) / reference_lora_params
-    if abs(budget_error_pct) > args.budget_tolerance_pct:
+    if adapter_name != "base" and abs(budget_error_pct) > args.budget_tolerance_pct:
         raise ValueError(
             f"{spec.method} budget differs from the rank-{spec.lora_r} LoRA reference by "
             f"{budget_error_pct:.2f}% ({adapter_params} vs {reference_lora_params} params). "
@@ -404,6 +412,7 @@ def build_budget_plan(args, spec: RunSpec, target_modules: List[str]) -> dict:
         "reference_lora_params": reference_lora_params,
         "adapter_trainable_params_estimate": adapter_params,
         "adapter_budget_error_pct": budget_error_pct,
+        "is_baseline": adapter_name == "base",
     }
 
 
@@ -424,7 +433,9 @@ def collect_trainable_param_report(model, budget_plan: dict) -> dict:
     if optimizer_params is None:
         optimizer_params = requires_grad_params
     reference_params = budget_plan["reference_lora_params"]
-    if reference_params:
+    if budget_plan.get("is_baseline"):
+        trainable_budget_error_pct = 0.0
+    elif reference_params:
         trainable_budget_error_pct = 100.0 * (optimizer_params - reference_params) / reference_params
     else:
         trainable_budget_error_pct = 0.0
@@ -443,6 +454,26 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
     calibration_data = args.train_data if args.calibration_data == "same_as_train" else args.calibration_data
     if adapter_name == "rosa":
         lora_params_ratio = args.rosa_lora_budget_ratio
+
+    if adapter_name == "base":
+        tokenizer = AutoTokenizer.from_pretrained(spec.model, trust_remote_code=True)
+        tokenizer.pad_token_id = 0
+        tokenizer.padding_side = "left"
+        model = AutoModelForCausalLM.from_pretrained(
+            spec.model,
+            load_in_8bit=False,
+            torch_dtype=torch.float16,
+            device_map={"": int(os.environ.get("LOCAL_RANK", 0))},
+            trust_remote_code=True,
+            attn_implementation="sdpa",
+        )
+        for parameter in model.parameters():
+            parameter.requires_grad_(False)
+        model.optimizer_trainable_params = 0
+        model.requires_grad_trainable_params = 0
+        model.config.use_cache = False
+        model.eval()
+        return model, tokenizer, output_dir
 
     common_kwargs = dict(
         base_model=spec.model,
@@ -911,8 +942,9 @@ def iter_run_specs(args) -> Iterable[RunSpec]:
     for seed in parse_csv_list(args.seeds, int):
         for model in parse_csv_list(args.models, str):
             for lora_r in parse_csv_list(args.lora_rs, int):
-                for lr in parse_csv_list(args.lrs, float):
-                    for method in parse_csv_list(args.methods, str):
+                for method in parse_csv_list(args.methods, str):
+                    lrs = [0.0] if method == "base" else parse_csv_list(args.lrs, float)
+                    for lr in lrs:
                         all_specs.append(RunSpec(seed=seed, model=model, lora_r=lora_r, lr=lr, method=method))
 
     if not 0 <= args.shard_id < args.num_shards:
