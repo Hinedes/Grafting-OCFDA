@@ -518,7 +518,7 @@ def train(
     elif adapter_name == "custom-lora":
         get_state_dict_func = get_custom_lora_model_state_dict
 
-    if "sift" not in adapter_name:
+    if adapter_name in ["super", "supra", "custom-lora"]:
         old_state_dict = model.state_dict
         model.state_dict = (
             lambda self, *_, **__: get_state_dict_func(
