@@ -21,6 +21,8 @@ RUN_ROOT=${RUN_ROOT:-/mnt/data/u/$USER/runs/llama1b_math_r8_main}
 source "$VENV/bin/activate"
 cd "$REPO/SuperTuning/fine_tuning"
 
+export PYTHONPATH="$PWD/peft/src:$PWD:$REPO/SuperTuning:${PYTHONPATH:-}"
+
 export HF_HOME=/mnt/data/u/$USER/hf
 export TRANSFORMERS_CACHE=/mnt/data/u/$USER/hf
 export HF_DATASETS_CACHE=/mnt/data/u/$USER/hf/datasets
@@ -30,6 +32,7 @@ export TOKENIZERS_PARALLELISM=false
 export PYTHONUNBUFFERED=1
 export PYTHONFAULTHANDLER=1
 export TORCH_SHOW_CPP_STACKTRACES=1
+export TORCH_DISABLE_ADDR2LINE=1
 export OMP_NUM_THREADS=4
 export MKL_NUM_THREADS=4
 

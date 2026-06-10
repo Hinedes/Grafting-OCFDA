@@ -6,6 +6,7 @@ import os
 import pickle
 import random
 import sys
+import traceback
 from dataclasses import asdict, dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -1105,11 +1106,13 @@ def run(args) -> None:
                 log_wandb_result(wandb_state, row, run_count)
             except Exception as exc:
                 failure_count += 1
+                traceback_text = traceback.format_exc()
                 failure_row = {
                     "run_id": spec.run_id,
                     **asdict(spec),
                     "error_type": type(exc).__name__,
                     "error": str(exc),
+                    "traceback": traceback_text,
                     "target_modules": target_modules,
                     **budget_plan,
                 }
@@ -1117,6 +1120,7 @@ def run(args) -> None:
                 log_wandb_failure(wandb_state, spec, exc, failure_count)
                 if not args.continue_on_error:
                     raise
+                print(traceback_text)
                 print(f"Run failed and will be skipped: {spec.run_id} ({type(exc).__name__}: {exc})")
             finally:
                 del model

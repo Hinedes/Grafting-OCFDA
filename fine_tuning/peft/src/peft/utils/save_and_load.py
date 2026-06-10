@@ -27,6 +27,8 @@ def get_peft_model_state_dict(model, state_dict=None):
             The state dict of the model. If not provided, the state dict of the model
         will be used.
     """
+    if callable(state_dict):
+        state_dict = state_dict()
     if state_dict is None:
         state_dict = model.state_dict()
     if model.peft_config.peft_type == PeftType.LORA:
