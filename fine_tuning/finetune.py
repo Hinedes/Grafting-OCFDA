@@ -148,6 +148,7 @@ def train(
 
         # debug params
         max_steps=-1,
+        save_model: bool = True,
 
         # SIFT params
         sparse_exception=[],
@@ -193,6 +194,7 @@ def train(
         f"attn_implementation: {attn_implementation}\n"
         f"optimizer_name: {optimizer_name}\n"
         f"max_steps: {max_steps}\n"
+        f"save_model: {save_model}\n"
         f"sparse_exception: {sparse_exception}\n"
         f"random_indices: {random_indices}\n"
         f"calibration_data: {calibration_data}\n"
@@ -483,12 +485,12 @@ def train(
             fp16=True,
             logging_steps=10,
             evaluation_strategy="steps" if val_set_size > 0 else "no",
-            save_strategy="steps",
+            save_strategy="steps" if save_model else "no",
             eval_steps=eval_step if val_set_size > 0 else None,
             save_steps=save_step,
             output_dir=output_dir,
             save_total_limit=1,
-            load_best_model_at_end=True if val_set_size > 0 else False,
+            load_best_model_at_end=True if val_set_size > 0 and save_model else False,
             ddp_find_unused_parameters=False if ddp and adapter_name not in ["sift"] else None,
             group_by_length=group_by_length,
             report_to="wandb" if use_wandb else "none",
@@ -557,7 +559,7 @@ def train(
 
     trainer.train()
 
-    if not int(os.environ.get("LOCAL_RANK", 0)):
+    if save_model and not int(os.environ.get("LOCAL_RANK", 0)):
         # save pretrained
         model.save_pretrained(output_dir)
 

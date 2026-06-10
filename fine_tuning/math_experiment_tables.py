@@ -499,6 +499,7 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
         random_indices=random_indices,
         max_steps=args.max_steps,
         optimizer_name=args.optimizer_name,
+        save_model=args.save_adapters,
     )
 
     if adapter_name != "rosa":
@@ -1180,6 +1181,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wandb_mode", default=os.environ.get("WANDB_MODE", "online"))
     parser.add_argument("--only_missing", action="store_true", default=True)
     parser.add_argument("--rerun_existing", dest="only_missing", action="store_false")
+    parser.add_argument("--save_adapters", action="store_true")
     parser.add_argument("--continue_on_error", action="store_true", default=True)
     parser.add_argument("--stop_on_error", dest="continue_on_error", action="store_false")
     parser.add_argument("--max_runs", type=int, default=None)
