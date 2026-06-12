@@ -59,12 +59,22 @@ def prepare_super_mask(
         seed=228,
         calibration_data="c4",
         outliers_ratio=None,
+        collect_stats=False,
+        max_layers=None,
 ):
     if sparse_rate is None:
         sparse_rate = outliers_ratio
     if sparse_rate is None:
         raise ValueError("prepare_super_mask requires sparse_rate or outliers_ratio.")
     dataloader, _ = get_loaders(calibration_data, nsamples, seed=seed, seqlen=model.seqlen, tokenizer=tokenizer)
+    stats = {
+        "calibration_data": calibration_data,
+        "requested_nsamples": nsamples,
+        "actual_nsamples": 0,
+        "seed": seed,
+        "sparse_rate": float(sparse_rate),
+        "layers": [],
+    } if collect_stats else None
 
     use_cache = model.config.use_cache
     model.config.use_cache = False
@@ -103,6 +113,8 @@ def prepare_super_mask(
             model(batch[0].to(dev))
         except ValueError:
             pass
+    if stats is not None:
+        stats["actual_nsamples"] = int(cache["i"])
     blocks[0] = blocks[0].module
 
     outs = torch.zeros_like(inps)
@@ -118,7 +130,8 @@ def prepare_super_mask(
     if position_embeddings is not None:
         block_args["position_embeddings"] = position_embeddings  # Add position embeddings if defined
 
-    for i in range(len(blocks)):
+    num_blocks = len(blocks) if max_layers is None else min(max_layers, len(blocks))
+    for i in range(num_blocks):
         block = blocks[i]
         #if f"model.layers.{i}" in model.hf_device_map:
         #    dev = model.hf_device_map[f"model.layers.{i}"]
@@ -164,6 +177,36 @@ def prepare_super_mask(
             topk_indices = torch.topk(flat_tensor, k=train_num).indices
             subset[name].weight.wanda_topk_indices = topk_indices.cpu()
 
+            if stats is not None:
+                scaler = wrappers[name].scaler_row.detach()
+                selected_metric = flat_tensor[topk_indices].detach()
+                stats["layers"].append(
+                    {
+                        "layer": int(i),
+                        "name": name,
+                        "weight_shape": [int(dim) for dim in subset[name].weight.shape],
+                        "train_num": int(train_num),
+                        "numel": int(subset[name].weight.numel()),
+                        "scaler_finite": bool(torch.isfinite(scaler).all().item()),
+                        "scaler_nan_count": int(torch.isnan(scaler).sum().item()),
+                        "scaler_inf_count": int(torch.isinf(scaler).sum().item()),
+                        "scaler_min": float(scaler.min().item()),
+                        "scaler_mean": float(scaler.mean().item()),
+                        "scaler_max": float(scaler.max().item()),
+                        "scaler_zero_frac": float((scaler == 0).float().mean().item()),
+                        "metric_finite": bool(torch.isfinite(flat_tensor).all().item()),
+                        "metric_nan_count": int(torch.isnan(flat_tensor).sum().item()),
+                        "metric_inf_count": int(torch.isinf(flat_tensor).sum().item()),
+                        "metric_min": float(flat_tensor.min().item()),
+                        "metric_mean": float(flat_tensor.mean().item()),
+                        "metric_max": float(flat_tensor.max().item()),
+                        "selected_metric_min": float(selected_metric.min().item()),
+                        "selected_metric_mean": float(selected_metric.mean().item()),
+                        "selected_metric_max": float(selected_metric.max().item()),
+                        "selected_unique_count": int(torch.unique(topk_indices).numel()),
+                    }
+                )
+
             print(i, name)
 
         blocks[i] = block
@@ -173,3 +216,5 @@ def prepare_super_mask(
 
     model.config.use_cache = use_cache
     torch.cuda.empty_cache()
+    if stats is not None:
+        return stats
