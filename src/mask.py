@@ -71,6 +71,8 @@ def prepare_super_mask(
 
     blocks = get_all_blocks(model)
 
+    dev = model.device
+
     #if "model.embed_tokens" in model.hf_device_map:
     #    dev = model.hf_device_map["model.embed_tokens"]
 
@@ -88,18 +90,12 @@ def prepare_super_mask(
         def forward(self, inp, **kwargs):
             inps[cache['i']] = inp
             cache['i'] += 1
-            cache['attention_mask'] = kwargs['attention_mask']
+            cache['attention_mask'] = kwargs.get('attention_mask')
             if 'position_embeddings' in kwargs:
                 cache['position_embeddings'] = kwargs['position_embeddings']
             if 'position_ids' in kwargs:
                 cache['position_ids'] = kwargs['position_ids']
             raise ValueError
-
-    # WARNING: the code was failing at this point (model on cuda, batch on cpu)
-    # I changed device from cpu to model.device and it stopped failing.
-    # But I'm not 100% sure that everything is correct. Check pls.
-    dev = model.device
-
 
     blocks[0] = Catcher(blocks[0])
     for batch in dataloader:

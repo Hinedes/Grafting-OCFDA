@@ -10,6 +10,9 @@ import hashlib
 from datasets import load_dataset
 
 
+LOADER_CACHE_VERSION = "v2"
+
+
 # Set seed for reproducibility
 def set_seed(seed):
     np.random.seed(seed)
@@ -142,8 +145,18 @@ def get_json_instruction_calibration(path, nsamples, seed, seqlen, tokenizer):
 def get_loaders(name, nsamples=128, seed=0, seqlen=2048, tokenizer=None):
 
     cache_dir = "loaders_cache"
-    cache_key = hashlib.md5(os.path.abspath(name).encode()).hexdigest()[:10] if os.path.exists(name) else name
-    name_cache_dir = cache_key + "_nsamples_" + str(nsamples) + "_seed_" + str(seed) + "_" + tokenizer.name_or_path.split('/')[-1]
+    seqlen = min(2048, seqlen)
+    if os.path.exists(name):
+        stat = os.stat(name)
+        cache_source = f"{os.path.abspath(name)}:{stat.st_size}:{int(stat.st_mtime)}"
+        cache_key = hashlib.md5(cache_source.encode()).hexdigest()[:10]
+    else:
+        cache_key = name
+    tokenizer_name = tokenizer.name_or_path.split('/')[-1] if tokenizer is not None else "unknown-tokenizer"
+    name_cache_dir = (
+        f"{LOADER_CACHE_VERSION}_{cache_key}"
+        f"_nsamples_{nsamples}_seed_{seed}_seqlen_{seqlen}_{tokenizer_name}"
+    )
 
     if not os.path.exists(cache_dir):
         os.makedirs(cache_dir)
@@ -155,9 +168,11 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, tokenizer=None):
     train_loader, test_loader = None, None
 
     if os.path.exists(full_cache_dir):
+        print(f"Loading calibration cache: {full_cache_dir}")
         train_loader = torch.load(full_cache_dir_train, weights_only=True)
         test_loader = torch.load(full_cache_dir_test, weights_only=False)
     else:
+        print(f"Building calibration cache: {full_cache_dir}")
         match name:
             case 'wikitext2':
                 train_loader, test_loader = get_wikitext2(nsamples, seed, seqlen, tokenizer)
