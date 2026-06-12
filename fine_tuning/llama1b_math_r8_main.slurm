@@ -17,6 +17,13 @@ set -euo pipefail
 REPO=${REPO:-$HOME/dev/super_supra_NeurIPS2025}
 VENV=${VENV:-$HOME/.venvs/supertuning}
 RUN_ROOT=${RUN_ROOT:-/mnt/data/u/$USER/runs/llama1b_math_r8_main}
+CALIBRATION_DATA=${CALIBRATION_DATA:-same_as_train}
+MODELS=${MODELS:-meta-llama/Llama-3.2-1B}
+LORA_RS=${LORA_RS:-8}
+SEEDS=${SEEDS:-0}
+WANDB_PROJECT=${WANDB_PROJECT:-super-supra-math}
+WANDB_GROUP=${WANDB_GROUP:-math-r8-llama3p2-1b-main}
+WANDB_TAGS=${WANDB_TAGS:-math10k,llama3.2-1b,r8,orix,h200}
 
 source "$VENV/bin/activate"
 cd "$REPO/SuperTuning/fine_tuning"
@@ -48,13 +55,27 @@ test -f dataset/gsm8k/test.json
 test -f dataset/AQuA/test.json
 test -f dataset/SVAMP/test.json
 
+EXTRA_ARGS=()
+if [[ -n "${METHODS:-}" ]]; then
+  EXTRA_ARGS+=(--methods "$METHODS")
+fi
+if [[ -n "${LRS:-}" ]]; then
+  EXTRA_ARGS+=(--lrs "$LRS")
+fi
+if [[ -n "${TRAIN_DATA:-}" ]]; then
+  EXTRA_ARGS+=(--train_data "$TRAIN_DATA")
+fi
+
 python launch_math_methods.py \
   --gpus 0,1,2,3 \
   --base_out_dir "$OUT" \
   --base_checkpoint_dir "$CKPT" \
-  --models meta-llama/Llama-3.2-1B \
-  --lora_rs 8 \
-  --seeds 0 \
-  --wandb_project super-supra-math \
-  --wandb_group math-r8-llama3p2-1b-main \
-  --wandb_tags math10k,llama3.2-1b,r8,orix,h200
+  --models "$MODELS" \
+  --lora_rs "$LORA_RS" \
+  --seeds "$SEEDS" \
+  --calibration_data "$CALIBRATION_DATA" \
+  --eval_selected_only \
+  --wandb_project "$WANDB_PROJECT" \
+  --wandb_group "$WANDB_GROUP" \
+  --wandb_tags "$WANDB_TAGS" \
+  "${EXTRA_ARGS[@]}"

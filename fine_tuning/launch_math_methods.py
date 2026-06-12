@@ -37,14 +37,24 @@ def write_jsonl(path: str, rows: Iterable[dict]) -> None:
 
 def merge_results(out_dir: str, method_out_dirs: Iterable[str], datasets: List[str]) -> None:
     by_run_id: Dict[str, dict] = {}
+    tuning_by_run_id: Dict[str, dict] = {}
     for method_out_dir in method_out_dirs:
         for row in read_jsonl(os.path.join(method_out_dir, "run_results.jsonl")):
             by_run_id[row["run_id"]] = row
+            if row.get("lr_tuning", {}).get("nll") is not None:
+                tuning_by_run_id.setdefault(row["run_id"], row)
+        for row in read_jsonl(os.path.join(method_out_dir, "tuning_results.jsonl")):
+            tuning_by_run_id[row["run_id"]] = row
 
     merged_rows = list(by_run_id.values())
+    merged_tuning_rows = list(tuning_by_run_id.values())
     write_jsonl(os.path.join(out_dir, "run_results.jsonl"), merged_rows)
-    save_tables(out_dir, merged_rows, datasets)
+    if merged_tuning_rows:
+        write_jsonl(os.path.join(out_dir, "tuning_results.jsonl"), merged_tuning_rows)
+    save_tables(out_dir, merged_rows, datasets, tuning_results=merged_tuning_rows or None)
     print(f"Merged {len(merged_rows)} completed runs into {out_dir}")
+    if merged_tuning_rows:
+        print(f"Merged {len(merged_tuning_rows)} LR tuning runs into {out_dir}")
 
 
 def launch_job(command: List[str], gpu: str, env: dict, log_path: str) -> Tuple[subprocess.Popen, object]:

@@ -613,6 +613,8 @@ def init_wandb(args, datasets: List[str], target_modules: List[str], total_specs
     run = wandb.init(**init_kwargs)
     define_metric = getattr(run, "define_metric", wandb.define_metric)
     define_metric("progress/completed_adapters")
+    define_metric("progress/completed_lr_tuning_runs")
+    define_metric("progress/completed_full_eval_runs")
     define_metric("progress/evaluated_fraction")
     define_metric("accuracy/*", step_metric="progress/completed_adapters")
     define_metric("ppl/*", step_metric="progress/completed_adapters")
@@ -680,6 +682,7 @@ def log_wandb_result(wandb_state, row: dict, completed_runs: int) -> None:
 
     metrics = {
         "progress/completed_adapters": completed_runs,
+        "progress/completed_full_eval_runs": completed_runs,
         "progress/pending_adapters": pending_specs,
         "progress/evaluated_fraction": completed_runs / pending_specs if pending_specs else 1.0,
         "hparams/lr": row.get("lr"),
@@ -699,6 +702,27 @@ def log_wandb_result(wandb_state, row: dict, completed_runs: int) -> None:
         metrics[f"ppl/{dataset}"] = ppl.get(dataset)
     metrics = {key: finite_or_none(value) for key, value in metrics.items()}
     run.log(metrics)
+
+
+def log_wandb_tuning_result(wandb_state, row: dict, tuned_runs: int, total_tuning_runs: int) -> None:
+    if wandb_state is None:
+        return
+    lr_tuning = row.get("lr_tuning", {})
+    metrics = {
+        "progress/completed_lr_tuning_runs": tuned_runs,
+        "progress/total_lr_tuning_runs": total_tuning_runs,
+        "progress/lr_tuning_fraction": tuned_runs / total_tuning_runs if total_tuning_runs else 1.0,
+        "hparams/lr": row.get("lr"),
+        "hparams/budget_lora_r": row.get("budget_lora_r"),
+        "budget/trainable_params": row.get("trainable_params"),
+        "budget/requires_grad_params": row.get("requires_grad_params"),
+        "budget/reference_lora_params": row.get("reference_lora_params"),
+        "budget/trainable_error_pct": row.get("trainable_budget_error_pct"),
+        "lr_tuning/ppl": lr_tuning.get("ppl"),
+        "lr_tuning/nll": lr_tuning.get("nll"),
+    }
+    metrics = {key: finite_or_none(value) for key, value in metrics.items()}
+    wandb_state["run"].log(metrics)
 
 
 def log_wandb_failure(wandb_state, spec: RunSpec, exc: Exception, failure_count: int) -> None:
@@ -790,7 +814,7 @@ def build_tables(results: Iterable[dict], datasets: List[str]) -> Tuple[pd.DataF
 
 
 def format_mean_std(mean_df: pd.DataFrame, std_df: pd.DataFrame) -> pd.DataFrame:
-    formatted = mean_df.copy()
+    formatted = mean_df.copy().astype(object)
     for row_idx in mean_df.index:
         for col in mean_df.columns:
             mean_value = mean_df.loc[row_idx, col]
@@ -806,10 +830,17 @@ def format_mean_std(mean_df: pd.DataFrame, std_df: pd.DataFrame) -> pd.DataFrame
     return formatted
 
 
-def save_selected_lr_tables(out_dir: str, results: Iterable[dict], datasets: List[str]) -> None:
+def save_selected_lr_tables(
+    out_dir: str,
+    results: Iterable[dict],
+    datasets: List[str],
+    tuning_results: Optional[Iterable[dict]] = None,
+) -> None:
+    result_rows = list(results)
+    selection_source = list(tuning_results) if tuning_results is not None else result_rows
     rows = [
         row
-        for row in results
+        for row in selection_source
         if row.get("lr_tuning", {}).get("nll") is not None
         and np.isfinite(row["lr_tuning"]["nll"])
     ]
@@ -867,7 +898,7 @@ def save_selected_lr_tables(out_dir: str, results: Iterable[dict], datasets: Lis
     }
 
     selected_results = []
-    for row in rows:
+    for row in result_rows:
         key = (row["model"], row["lora_r"], row["method"])
         if row["lr"] == selected_lookup.get(key):
             selected_results.append(row)
@@ -923,8 +954,14 @@ def save_selected_lr_tables(out_dir: str, results: Iterable[dict], datasets: Lis
     aggregate("ppl", "selected_ppl")
 
 
-def save_tables(out_dir: str, results: Iterable[dict], datasets: List[str]) -> None:
-    accuracy_df, ppl_df, summary_df = build_tables(results, datasets)
+def save_tables(
+    out_dir: str,
+    results: Iterable[dict],
+    datasets: List[str],
+    tuning_results: Optional[Iterable[dict]] = None,
+) -> None:
+    result_rows = list(results)
+    accuracy_df, ppl_df, summary_df = build_tables(result_rows, datasets)
     os.makedirs(out_dir, exist_ok=True)
 
     for name, df in [
@@ -936,7 +973,191 @@ def save_tables(out_dir: str, results: Iterable[dict], datasets: List[str]) -> N
         save_pickle(df, os.path.join(out_dir, f"{name}.pkl"))
         with open(os.path.join(out_dir, f"{name}.tex"), "w") as f:
             f.write(df.to_latex(float_format=lambda value: f"{value:.2f}" if pd.notna(value) else ""))
-    save_selected_lr_tables(out_dir, results, datasets)
+    save_selected_lr_tables(out_dir, result_rows, datasets, tuning_results=tuning_results)
+
+
+def resolved_calibration_data(args) -> str:
+    return args.train_data if args.calibration_data == "same_as_train" else args.calibration_data
+
+
+def make_result_row(
+    args,
+    spec: RunSpec,
+    budget_plan: dict,
+    trainable_param_report: dict,
+    target_modules: List[str],
+    checkpoint_dir: str,
+    lr_tuning: dict,
+    eval_stage: str,
+) -> dict:
+    return {
+        "run_id": spec.run_id,
+        **asdict(spec),
+        "eval_stage": eval_stage,
+        "sparse_rate": budget_plan["total_sparse_rate"],
+        **budget_plan,
+        **trainable_param_report,
+        "target_modules": target_modules,
+        "train_data": args.train_data,
+        "calibration_data": resolved_calibration_data(args),
+        "calibration_nsamples": args.calibration_nsamples,
+        "calibration_seed": args.calibration_seed,
+        "val_split_seed": args.val_split_seed,
+        "lr_tuning": lr_tuning,
+        "checkpoint_dir": checkpoint_dir,
+    }
+
+
+def print_spec_header(spec: RunSpec, budget_plan: dict, stage: str) -> None:
+    print("=" * 100)
+    print("Stage:", stage)
+    print("Run:", asdict(spec))
+    print("rank-equivalent global sparse_rate:", budget_plan["total_sparse_rate"])
+    print(
+        "adapter budget estimate:",
+        budget_plan["adapter_trainable_params_estimate"],
+        "reference LoRA params:",
+        budget_plan["reference_lora_params"],
+        f"error={budget_plan['adapter_budget_error_pct']:.4f}%",
+    )
+    print("train_lora_r:", budget_plan["train_lora_r"])
+    print("train_sparse_rate:", budget_plan["train_sparse_rate"])
+
+
+def run_spec_once(
+    args,
+    spec: RunSpec,
+    budget_plan: dict,
+    target_modules: List[str],
+    datasets: List[str],
+    lr_tuning_records: Optional[List[dict]],
+    full_eval: bool,
+    stage: str,
+) -> Optional[dict]:
+    set_seed(spec.seed)
+    model = tokenizer = None
+    try:
+        model, tokenizer, checkpoint_dir = train_one_run(args, spec, budget_plan, target_modules)
+        if args.dry_run:
+            return None
+
+        trainable_param_report = collect_trainable_param_report(model, budget_plan)
+        print("actual optimizer trainable params:", trainable_param_report["trainable_params"])
+        print("requires-grad params:", trainable_param_report["requires_grad_params"])
+        print(
+            "actual trainable budget error:",
+            f"{trainable_param_report['trainable_budget_error_pct']:.4f}%",
+        )
+        if abs(trainable_param_report["trainable_budget_error_pct"]) > args.budget_tolerance_pct:
+            raise ValueError(
+                f"Actual optimizer trainable params differ from the rank-{spec.lora_r} LoRA reference by "
+                f"{trainable_param_report['trainable_budget_error_pct']:.2f}% "
+                f"({trainable_param_report['trainable_params']} vs {budget_plan['reference_lora_params']} params)."
+            )
+
+        lr_tuning = {}
+        if lr_tuning_records is not None:
+            tune_ppl, tune_nll, tune_count = evaluate_perplexity_on_records(
+                model=model,
+                tokenizer=tokenizer,
+                records=lr_tuning_records,
+                max_length=args.ppl_max_length,
+                max_examples=args.lr_tuning_max_examples,
+            )
+            lr_tuning = {"ppl": tune_ppl, "nll": tune_nll, "examples": tune_count}
+            print(f"LR tuning validation ppl: {tune_ppl:.4f} (nll={tune_nll:.4f}, examples={tune_count})")
+
+        row = make_result_row(
+            args=args,
+            spec=spec,
+            budget_plan=budget_plan,
+            trainable_param_report=trainable_param_report,
+            target_modules=target_modules,
+            checkpoint_dir=checkpoint_dir,
+            lr_tuning=lr_tuning,
+            eval_stage=stage,
+        )
+
+        if full_eval:
+            accuracy: Dict[str, float] = {}
+            for dataset in datasets:
+                score = eval_model(dataset_name=dataset, model=model, tokenizer=tokenizer) * 100.0
+                accuracy[dataset] = score
+                print(f"{dataset} accuracy: {score:.4f}")
+            accuracy["Average"] = float(np.mean([accuracy[dataset] for dataset in datasets]))
+
+            ppl, nll, ppl_examples = evaluate_perplexity(
+                model=model,
+                tokenizer=tokenizer,
+                datasets=datasets,
+                max_length=args.ppl_max_length,
+                max_examples=args.ppl_max_examples,
+            )
+            row.update(
+                selected_by_lr_tuning=(stage == "selected_full_eval"),
+                accuracy=accuracy,
+                ppl=ppl,
+                nll=nll,
+                ppl_examples=ppl_examples,
+            )
+
+        return row
+    finally:
+        del model
+        del tokenizer
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
+def merged_tuning_results(tuning_rows: Dict[str, dict], full_rows: Dict[str, dict]) -> Dict[str, dict]:
+    merged = dict(tuning_rows)
+    for run_id, row in full_rows.items():
+        if row.get("lr_tuning", {}).get("nll") is not None:
+            merged.setdefault(run_id, row)
+    return merged
+
+
+def selection_group_key(spec: RunSpec) -> Tuple[str, int, str]:
+    return spec.model, spec.lora_r, spec.method
+
+
+def select_specs_from_tuning(specs: List[RunSpec], tuning_lookup: Dict[str, dict]) -> Tuple[List[RunSpec], Dict[Tuple[str, int, str], float]]:
+    grouped_specs: Dict[Tuple[str, int, str], List[RunSpec]] = {}
+    for spec in specs:
+        grouped_specs.setdefault(selection_group_key(spec), []).append(spec)
+
+    selected_specs: List[RunSpec] = []
+    selected_lrs: Dict[Tuple[str, int, str], float] = {}
+    for group_key, group_specs in grouped_specs.items():
+        missing = [spec.run_id for spec in group_specs if spec.run_id not in tuning_lookup]
+        if missing:
+            print(
+                "LR selection pending for",
+                group_key,
+                f"({len(missing)} missing tuning rows)",
+            )
+            continue
+
+        lr_rows = []
+        for spec in group_specs:
+            lr_tuning = tuning_lookup[spec.run_id].get("lr_tuning", {})
+            nll = lr_tuning.get("nll")
+            if nll is None or not np.isfinite(nll):
+                continue
+            lr_rows.append({"lr": spec.lr, "nll": float(nll)})
+        if not lr_rows:
+            print("LR selection skipped because all tuning metrics are invalid for", group_key)
+            continue
+
+        lr_df = pd.DataFrame(lr_rows)
+        grouped = lr_df.groupby("lr")["nll"].mean()
+        selected_lr = float(grouped.idxmin())
+        selected_lrs[group_key] = selected_lr
+        print("Selected LR for", group_key, "=", f"{selected_lr:g}", "(mean nll", f"{grouped.loc[selected_lr]:.4f})")
+        selected_specs.extend([spec for spec in group_specs if spec.lr == selected_lr])
+
+    return selected_specs, selected_lrs
 
 
 def iter_run_specs(args) -> Iterable[RunSpec]:
@@ -963,33 +1184,51 @@ def run(args) -> None:
         raise ValueError("--rosa_lora_budget_ratio must be in [0, 1].")
     if args.budget_tolerance_pct < 0.0:
         raise ValueError("--budget_tolerance_pct must be nonnegative.")
+    if not args.eval_all_lrs and args.skip_lr_tuning_metric:
+        raise ValueError("--skip_lr_tuning_metric cannot be used with selected-only evaluation.")
 
     target_modules = LEGACY_TARGET_MODULES if args.legacy_target_modules else parse_csv_list(args.target_modules, str)
     datasets = parse_csv_list(args.datasets, str)
     os.makedirs(args.out_dir, exist_ok=True)
     os.makedirs(args.checkpoint_dir, exist_ok=True)
     results_path = os.path.join(args.out_dir, "run_results.jsonl")
+    tuning_results_path = os.path.join(args.out_dir, "tuning_results.jsonl")
     failures_path = os.path.join(args.out_dir, "failed_runs.jsonl")
     existing = load_existing_results(results_path)
+    tuning_existing = load_existing_results(tuning_results_path)
+    tuning_lookup = merged_tuning_results(tuning_existing, existing)
     completed_results = list(existing.values())
 
     print("Training data:", args.train_data)
-    print("Wanda calibration data:", args.train_data if args.calibration_data == "same_as_train" else args.calibration_data)
+    print("Wanda calibration data:", resolved_calibration_data(args))
     print("Wanda calibration samples:", args.calibration_nsamples)
     print("Wanda calibration seed:", args.calibration_seed)
     print("Evaluation datasets:", datasets)
     print("Target modules:", target_modules)
     print("Validation split seed:", args.val_split_seed)
     print("Output directory:", args.out_dir)
+    print("Evaluation mode:", "all learning rates" if args.eval_all_lrs else "selected LR only")
 
     specs = list(iter_run_specs(args))
-    pending_specs = [
-        spec
-        for spec in specs
-        if not (args.only_missing and spec.run_id in existing)
-    ]
-    if args.max_runs is not None:
-        pending_specs = pending_specs[:args.max_runs]
+    if args.eval_all_lrs:
+        pending_specs = [
+            spec
+            for spec in specs
+            if not (args.only_missing and spec.run_id in existing)
+        ]
+    else:
+        tuning_pending_specs = [
+            spec
+            for spec in specs
+            if not (args.only_missing and spec.run_id in tuning_lookup)
+        ]
+        selected_specs, _ = select_specs_from_tuning(specs, tuning_lookup)
+        full_eval_pending_specs = [
+            spec
+            for spec in selected_specs
+            if not (args.only_missing and spec.run_id in existing)
+        ]
+        pending_specs = tuning_pending_specs + full_eval_pending_specs
     wandb_state = init_wandb(
         args=args,
         datasets=datasets,
@@ -1007,130 +1246,96 @@ def run(args) -> None:
         )
         print("LR tuning metric: validation perplexity on", len(lr_tuning_records), "held-out Math10K examples")
 
-    run_count = 0
+    action_count = 0
     failure_count = 0
-    try:
-        for spec in specs:
-            if args.only_missing and spec.run_id in existing:
-                print("Already computed:", spec.run_id)
-                continue
-            if args.max_runs is not None and run_count >= args.max_runs:
-                break
 
+    def reached_action_limit() -> bool:
+        return args.max_runs is not None and action_count >= args.max_runs
+
+    def execute_and_record(spec: RunSpec, stage: str, full_eval: bool) -> None:
+        nonlocal action_count, failure_count, completed_results, tuning_lookup
+        budget_plan = {}
+        try:
             budget_plan = build_budget_plan(args, spec, target_modules)
-            print("=" * 100)
-            print("Run:", asdict(spec))
-            print("rank-equivalent global sparse_rate:", budget_plan["total_sparse_rate"])
-            print(
-                "adapter budget estimate:",
-                budget_plan["adapter_trainable_params_estimate"],
-                "reference LoRA params:",
-                budget_plan["reference_lora_params"],
-                f"error={budget_plan['adapter_budget_error_pct']:.4f}%",
-            )
-            print("train_lora_r:", budget_plan["train_lora_r"])
-            print("train_sparse_rate:", budget_plan["train_sparse_rate"])
+            print_spec_header(spec, budget_plan, stage)
             log_wandb_run_started(wandb_state, spec, budget_plan)
-            set_seed(spec.seed)
+            row = run_spec_once(
+                args=args,
+                spec=spec,
+                budget_plan=budget_plan,
+                target_modules=target_modules,
+                datasets=datasets,
+                lr_tuning_records=lr_tuning_records,
+                full_eval=full_eval,
+                stage=stage,
+            )
+            action_count += 1
+            if row is None:
+                return
 
-            model = tokenizer = None
-            try:
-                model, tokenizer, checkpoint_dir = train_one_run(args, spec, budget_plan, target_modules)
-                if args.dry_run:
-                    run_count += 1
-                    continue
-                trainable_param_report = collect_trainable_param_report(model, budget_plan)
-                print("actual optimizer trainable params:", trainable_param_report["trainable_params"])
-                print("requires-grad params:", trainable_param_report["requires_grad_params"])
-                print(
-                    "actual trainable budget error:",
-                    f"{trainable_param_report['trainable_budget_error_pct']:.4f}%",
-                )
-                if abs(trainable_param_report["trainable_budget_error_pct"]) > args.budget_tolerance_pct:
-                    raise ValueError(
-                        f"Actual optimizer trainable params differ from the rank-{spec.lora_r} LoRA reference by "
-                        f"{trainable_param_report['trainable_budget_error_pct']:.2f}% "
-                        f"({trainable_param_report['trainable_params']} vs {budget_plan['reference_lora_params']} params)."
-                    )
-
-                lr_tuning = {}
-                if lr_tuning_records is not None:
-                    tune_ppl, tune_nll, tune_count = evaluate_perplexity_on_records(
-                        model=model,
-                        tokenizer=tokenizer,
-                        records=lr_tuning_records,
-                        max_length=args.ppl_max_length,
-                        max_examples=args.lr_tuning_max_examples,
-                    )
-                    lr_tuning = {"ppl": tune_ppl, "nll": tune_nll, "examples": tune_count}
-                    print(f"LR tuning validation ppl: {tune_ppl:.4f} (nll={tune_nll:.4f}, examples={tune_count})")
-
-                accuracy: Dict[str, float] = {}
-                for dataset in datasets:
-                    score = eval_model(dataset_name=dataset, model=model, tokenizer=tokenizer) * 100.0
-                    accuracy[dataset] = score
-                    print(f"{dataset} accuracy: {score:.4f}")
-                accuracy["Average"] = float(np.mean([accuracy[dataset] for dataset in datasets]))
-
-                ppl, nll, ppl_examples = evaluate_perplexity(
-                    model=model,
-                    tokenizer=tokenizer,
-                    datasets=datasets,
-                    max_length=args.ppl_max_length,
-                    max_examples=args.ppl_max_examples,
-                )
-
-                row = {
-                    "run_id": spec.run_id,
-                    **asdict(spec),
-                    "sparse_rate": budget_plan["total_sparse_rate"],
-                    **budget_plan,
-                    **trainable_param_report,
-                    "target_modules": target_modules,
-                    "train_data": args.train_data,
-                    "calibration_data": args.train_data if args.calibration_data == "same_as_train" else args.calibration_data,
-                    "calibration_nsamples": args.calibration_nsamples,
-                    "calibration_seed": args.calibration_seed,
-                    "val_split_seed": args.val_split_seed,
-                    "lr_tuning": lr_tuning,
-                    "checkpoint_dir": checkpoint_dir,
-                    "accuracy": accuracy,
-                    "ppl": ppl,
-                    "nll": nll,
-                    "ppl_examples": ppl_examples,
-                }
+            if full_eval:
                 append_jsonl(results_path, row)
                 existing[spec.run_id] = row
-                completed_results.append(row)
-                save_tables(args.out_dir, completed_results, datasets)
-                run_count += 1
-                log_wandb_result(wandb_state, row, run_count)
-            except Exception as exc:
-                failure_count += 1
-                traceback_text = traceback.format_exc()
-                failure_row = {
-                    "run_id": spec.run_id,
-                    **asdict(spec),
-                    "error_type": type(exc).__name__,
-                    "error": str(exc),
-                    "traceback": traceback_text,
-                    "target_modules": target_modules,
-                    **budget_plan,
-                }
-                append_jsonl(failures_path, failure_row)
-                log_wandb_failure(wandb_state, spec, exc, failure_count)
-                if not args.continue_on_error:
-                    raise
-                print(traceback_text)
-                print(f"Run failed and will be skipped: {spec.run_id} ({type(exc).__name__}: {exc})")
-            finally:
-                del model
-                del tokenizer
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                completed_results = list(existing.values())
+                if row.get("lr_tuning", {}).get("nll") is not None:
+                    tuning_lookup.setdefault(spec.run_id, row)
+                save_tables(args.out_dir, completed_results, datasets, tuning_results=tuning_lookup.values())
+                log_wandb_result(wandb_state, row, len(existing))
+            else:
+                append_jsonl(tuning_results_path, row)
+                tuning_existing[spec.run_id] = row
+                tuning_lookup[spec.run_id] = row
+                save_tables(args.out_dir, completed_results, datasets, tuning_results=tuning_lookup.values())
+                log_wandb_tuning_result(wandb_state, row, len(tuning_lookup), len(specs))
+        except Exception as exc:
+            failure_count += 1
+            traceback_text = traceback.format_exc()
+            failure_row = {
+                "run_id": spec.run_id,
+                **asdict(spec),
+                "eval_stage": stage,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "traceback": traceback_text,
+                "target_modules": target_modules,
+                **budget_plan,
+            }
+            append_jsonl(failures_path, failure_row)
+            log_wandb_failure(wandb_state, spec, exc, failure_count)
+            if not args.continue_on_error:
+                raise
+            print(traceback_text)
+            print(f"Run failed and will be skipped: {spec.run_id} ({type(exc).__name__}: {exc})")
 
-        save_tables(args.out_dir, existing.values(), datasets)
+    try:
+        if args.eval_all_lrs:
+            for spec in specs:
+                if args.only_missing and spec.run_id in existing:
+                    print("Already computed:", spec.run_id)
+                    continue
+                if reached_action_limit():
+                    break
+                execute_and_record(spec, stage="full_eval_all_lrs", full_eval=True)
+        else:
+            for spec in specs:
+                if args.only_missing and spec.run_id in tuning_lookup:
+                    print("Already tuned:", spec.run_id)
+                    continue
+                if reached_action_limit():
+                    break
+                execute_and_record(spec, stage="lr_tuning", full_eval=False)
+
+            if not reached_action_limit():
+                selected_specs, _ = select_specs_from_tuning(specs, tuning_lookup)
+                for spec in selected_specs:
+                    if args.only_missing and spec.run_id in existing:
+                        print("Already full-evaluated selected LR:", spec.run_id)
+                        continue
+                    if reached_action_limit():
+                        break
+                    execute_and_record(spec, stage="selected_full_eval", full_eval=True)
+
+        save_tables(args.out_dir, existing.values(), datasets, tuning_results=tuning_lookup.values())
         print("Finished. Tables written to:", args.out_dir)
     finally:
         finish_wandb(wandb_state)
@@ -1169,6 +1374,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr_tuning_max_examples", type=int, default=None)
     parser.add_argument("--val_split_seed", "--lr_tuning_split_seed", dest="val_split_seed", type=int, default=42)
     parser.add_argument("--skip_lr_tuning_metric", action="store_true")
+    parser.add_argument(
+        "--eval_selected_only",
+        dest="eval_all_lrs",
+        action="store_false",
+        help="Tune all learning rates cheaply, then run full benchmark generation only for the selected LR.",
+    )
+    parser.add_argument(
+        "--eval_all_lrs",
+        dest="eval_all_lrs",
+        action="store_true",
+        help="Legacy mode: run full benchmark generation for every learning rate.",
+    )
     parser.add_argument("--sparse_rate_override", type=float, default=None)
     parser.add_argument("--rosa_lora_budget_ratio", type=float, default=0.5)
     parser.add_argument("--budget_tolerance_pct", type=float, default=3.0)
@@ -1188,6 +1405,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_shards", type=int, default=1)
     parser.add_argument("--shard_id", type=int, default=0)
     parser.add_argument("--dry_run", action="store_true")
+    parser.set_defaults(eval_all_lrs=False)
     return parser.parse_args()
 
 
