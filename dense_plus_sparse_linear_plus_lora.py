@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import math
 
-from dense_plus_sparse_linear import DensePlusSparseLinear
+from dense_plus_sparse_linear import DensePlusSparseLinear, random_sparse_indices
 from src.mask import prepare_super_mask
 
 
@@ -39,7 +39,7 @@ class SparseDenseLoraLinear(nn.Module):
             self.state = base_layer.state
 
         if indices is None:
-            indices = torch.randint(0, self.num_elements, (super_params,))
+            indices = random_sparse_indices(self.num_elements, super_params, self.weight.device)
         indices = indices.to(dtype=torch.int32, device=self.weight.device)[:super_params]
 
         self.values = nn.Parameter(torch.zeros(super_params, dtype=torch.float32, device=self.weight.device))
@@ -104,8 +104,21 @@ def get_dense_plus_sparse_plus_lora_model(model,
         target = model.get_submodule(key)
         return parent, target, target_name
 
+    if indices_choice not in {"random", "super"}:
+        raise ValueError("indices_choice must be either 'random' or 'super'.")
+
+    replaced_modules = 0
+    total_indices = 0
+    total_unique_indices = 0
+
     def _replace_module(parent_module, child_name, old_module):
-        indices = getattr(old_module.weight, "wanda_topk_indices", None)
+        nonlocal replaced_modules, total_indices, total_unique_indices
+        if indices_choice == "super":
+            indices = getattr(old_module.weight, "wanda_topk_indices", None)
+            if indices is None:
+                raise RuntimeError("Wanda indices were not prepared for a Supra sparse layer.")
+        else:
+            indices = None
         new_module = SparseDenseLoraLinear(old_module,
                                            sparse_rate=sparse_rate,
                                            lora_params_ratio=lora_params_ratio,
@@ -113,6 +126,9 @@ def get_dense_plus_sparse_plus_lora_model(model,
                                            lora_dropout=lora_dropout,
                                            indices=indices)
         setattr(parent_module, child_name, new_module)
+        replaced_modules += 1
+        total_indices += int(new_module.indices.numel())
+        total_unique_indices += int(torch.unique(new_module.indices).numel())
 
     for module_name, _ in model.named_modules():
         if not any(module_name.endswith(target_key) for target_key in target_modules_list):
@@ -120,6 +136,17 @@ def get_dense_plus_sparse_plus_lora_model(model,
 
         parent, target, target_name = _get_submodules(module_name)
         _replace_module(parent, target_name, target)
+
+    print(
+        "Sparse mask source:",
+        "wanda" if indices_choice == "super" else "random",
+        "replaced modules:",
+        replaced_modules,
+        "sparse entries:",
+        total_indices,
+        "unique sparse entries:",
+        total_unique_indices,
+    )
 
     for name, p in model.named_parameters():
         if not ("values" in name or "lora" in name or any([item in name for item in exception])):

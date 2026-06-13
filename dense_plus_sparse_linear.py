@@ -5,6 +5,22 @@ import math
 from src.mask import prepare_super_mask
 
 
+def random_sparse_indices(num_elements: int, train_num: int, device) -> torch.Tensor:
+    if train_num <= 0:
+        return torch.empty(0, dtype=torch.int32, device=device)
+    if train_num >= num_elements:
+        return torch.arange(num_elements, dtype=torch.int32, device=device)
+
+    selected = torch.empty(0, dtype=torch.int64, device=device)
+    while selected.numel() < train_num:
+        remaining = train_num - selected.numel()
+        sample_count = min(num_elements, max(remaining + remaining // 10 + 16, remaining))
+        sample = torch.randint(0, num_elements, (sample_count,), dtype=torch.int64, device=device)
+        selected = torch.unique(torch.cat([selected, sample]))
+
+    return selected[:train_num].to(dtype=torch.int32)
+
+
 class DensePlusSparseLinear(torch.autograd.Function):
     @staticmethod
     @torch.amp.custom_fwd(device_type="cuda")
@@ -66,8 +82,7 @@ class SparseDenseLinear(nn.Module):
             self.state = base_layer.state
 
         if indices is None:
-            # indices = torch.randperm(self.num_elements-1)
-            indices = torch.randint(0, self.num_elements, (super_params,))
+            indices = random_sparse_indices(self.num_elements, super_params, self.weight.device)
         indices = indices.to(dtype=torch.int32, device=self.weight.device)[:super_params]
         
         self.values = nn.Parameter(
@@ -108,10 +123,26 @@ def get_dense_plus_sparse_model(
         target = model.get_submodule(key)
         return parent, target, target_name
 
+    if indices_choice not in {"random", "super"}:
+        raise ValueError("indices_choice must be either 'random' or 'super'.")
+
+    replaced_modules = 0
+    total_indices = 0
+    total_unique_indices = 0
+
     def _replace_module(parent_module, child_name, old_module):
-        indices = getattr(old_module.weight, "wanda_topk_indices", None)
+        nonlocal replaced_modules, total_indices, total_unique_indices
+        if indices_choice == "super":
+            indices = getattr(old_module.weight, "wanda_topk_indices", None)
+            if indices is None:
+                raise RuntimeError("Wanda indices were not prepared for a Super sparse layer.")
+        else:
+            indices = None
         new_module = SparseDenseLinear(old_module, sparse_rate=sparse_rate, indices=indices)
         setattr(parent_module, child_name, new_module)
+        replaced_modules += 1
+        total_indices += int(new_module.indices.numel())
+        total_unique_indices += int(torch.unique(new_module.indices).numel())
 
     for module_name, _ in model.named_modules():
         if not any(module_name.endswith(target_key) for target_key in target_modules_list):
@@ -119,6 +150,17 @@ def get_dense_plus_sparse_model(
         
         parent, target, target_name = _get_submodules(module_name)
         _replace_module(parent, target_name, target)
+
+    print(
+        "Sparse mask source:",
+        "wanda" if indices_choice == "super" else "random",
+        "replaced modules:",
+        replaced_modules,
+        "sparse entries:",
+        total_indices,
+        "unique sparse entries:",
+        total_unique_indices,
+    )
     
     for name, p in model.named_parameters():
         if not ("values" in name or any([item in name for item in exception])):
