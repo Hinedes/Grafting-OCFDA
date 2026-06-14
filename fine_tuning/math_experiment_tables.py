@@ -498,6 +498,7 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
         adapter_name=adapter_name,
         random_indices=random_indices,
         max_steps=args.max_steps,
+        warmup_steps=args.warmup_steps,
         optimizer_name=args.optimizer_name,
         save_model=args.save_adapters,
     )
@@ -1369,6 +1370,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--compile", type=int, default=0)
     parser.add_argument("--optimizer_name", default="adam")
     parser.add_argument("--max_steps", type=int, default=-1)
+    parser.add_argument("--warmup_steps", type=int, default=100)
     parser.add_argument("--ppl_max_length", type=int, default=256)
     parser.add_argument("--ppl_max_examples", type=int, default=None)
     parser.add_argument("--lr_tuning_max_examples", type=int, default=None)

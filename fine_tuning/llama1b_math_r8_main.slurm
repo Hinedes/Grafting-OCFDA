@@ -65,6 +65,21 @@ fi
 if [[ -n "${TRAIN_DATA:-}" ]]; then
   EXTRA_ARGS+=(--train_data "$TRAIN_DATA")
 fi
+if [[ -n "${MAX_STEPS:-}" ]]; then
+  EXTRA_ARGS+=(--max_steps "$MAX_STEPS")
+fi
+if [[ -n "${WARMUP_STEPS:-}" ]]; then
+  EXTRA_ARGS+=(--warmup_steps "$WARMUP_STEPS")
+fi
+if [[ -n "${NUM_EPOCHS:-}" ]]; then
+  EXTRA_ARGS+=(--num_epochs "$NUM_EPOCHS")
+fi
+if [[ -n "${LR_TUNING_MAX_EXAMPLES:-}" ]]; then
+  EXTRA_ARGS+=(--lr_tuning_max_examples "$LR_TUNING_MAX_EXAMPLES")
+fi
+if [[ -n "${PPL_MAX_EXAMPLES:-}" ]]; then
+  EXTRA_ARGS+=(--ppl_max_examples "$PPL_MAX_EXAMPLES")
+fi
 
 python launch_math_methods.py \
   --gpus 0,1,2,3 \

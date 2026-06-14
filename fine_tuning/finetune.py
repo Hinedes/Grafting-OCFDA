@@ -111,6 +111,7 @@ def train(
         load_from_checkpoints: bool = False,
         eval_step: int = 50,
         save_step: int = 50,
+        warmup_steps: int = 100,
         val_split_seed: int = 42,
         seed=0,
         # lora hyperparams
@@ -193,6 +194,7 @@ def train(
         f"compile: {compile}\n"
         f"attn_implementation: {attn_implementation}\n"
         f"optimizer_name: {optimizer_name}\n"
+        f"warmup_steps: {warmup_steps}\n"
         f"max_steps: {max_steps}\n"
         f"save_model: {save_model}\n"
         f"sparse_exception: {sparse_exception}\n"
@@ -478,7 +480,7 @@ def train(
             per_device_train_batch_size=micro_batch_size,
             per_device_eval_batch_size=micro_batch_size,
             gradient_accumulation_steps=gradient_accumulation_steps,
-            warmup_steps=100,
+            warmup_steps=warmup_steps,
             num_train_epochs=num_epochs,
             learning_rate=learning_rate,
             seed=seed,
