@@ -3,8 +3,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 from scipy.sparse import csr_matrix
-import spops
 from .spa_functions import SpMMFunction, SpMMTFunction
+from .sparse_ops import csr_transpose
 
 class SparseLinear(nn.Module):
     def __init__(self, density, shape, store_transpose=False, dtype=torch.bfloat16):
@@ -53,7 +53,7 @@ class SparseLinear(nn.Module):
     def tr(self, none_if_not_exist=False):
         if self.store_transpose:
             if self.tr_row_offs[-1] == 0:
-                tr_perm_plus_one, tr_row_offs, tr_col_idx = spops.csr_transpose(
+                tr_perm_plus_one, tr_row_offs, tr_col_idx = csr_transpose(
                     torch.arange(self.values.shape[0], dtype=torch.float32, device=self.values.device) + 1,
                     self.row_offs,
                     self.col_idx,
@@ -72,7 +72,7 @@ class SparseLinear(nn.Module):
         else:
             if none_if_not_exist:
                 return [None] * 4   
-            tr_values, tr_row_offs, tr_col_idx = spops.csr_transpose(
+            tr_values, tr_row_offs, tr_col_idx = csr_transpose(
                 self.values.data,
                 self.row_offs,
                 self.col_idx,

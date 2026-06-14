@@ -1,7 +1,7 @@
 import torch
 from torch.autograd.function import once_differentiable
 import bitsandbytes as bnb
-from spops import sddmm, csr_add
+from .sparse_ops import sddmm, csr_add
 
 class RoSALinearFunction(torch.autograd.Function):
     """

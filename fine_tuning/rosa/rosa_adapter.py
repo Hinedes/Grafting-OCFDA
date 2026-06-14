@@ -24,7 +24,7 @@ def get_rosa_model(
     d: float = 0.003,
     alpha: int = 16,
     dropout: float = 0.05,
-    impl: str = "spmm",          # or "sp_add"
+    impl: str = "sp_add",
     schedule: str = "wl0",
     spa_num_grads: int = 1,
 ):

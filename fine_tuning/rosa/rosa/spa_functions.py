@@ -1,6 +1,6 @@
 import torch
-from spops import spmm, sddmm, csr_transpose
 from torch.autograd.function import once_differentiable
+from .sparse_ops import spmm, sddmm, csr_transpose
 
 class SpMMFunction(torch.autograd.Function):
     """

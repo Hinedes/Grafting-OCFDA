@@ -311,7 +311,7 @@ def train(
             d=sparse_rate,
             alpha=lora_alpha,
             dropout=lora_dropout,
-            impl="spmm",
+            impl="sp_add",
         )
         print('\n' * 3)
         print(model)
