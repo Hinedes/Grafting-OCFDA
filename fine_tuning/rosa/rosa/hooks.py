@@ -1,5 +1,10 @@
+import os
+
 import torch
 from .layer import RosaLayer
+
+VERBOSE_ROSA_HOOKS = os.environ.get("ROSA_VERBOSE_HOOKS", "0") == "1"
+
 
 class GradCollectorHook:
     def __init__(self, name: str, module: RosaLayer, grad_acc_mode: str) -> None:
@@ -9,7 +14,8 @@ class GradCollectorHook:
         self._grad_acc_mode = grad_acc_mode
 
     def __call__(self, param):
-        print('hook called for', self._name)
+        if VERBOSE_ROSA_HOOKS:
+            print('hook called for', self._name)
 
         if not hasattr(self._module, 'collected_grad'):
             self._module.register_buffer('collected_grad', torch.zeros_like(param.grad, device='cpu'))
@@ -39,15 +45,19 @@ class SaveInputHook:
     def __call__(self, model, module_in, module_out):
         if not isinstance(module_in, torch.Tensor):
             if len(module_in) > 1:
-                print(f'found {len(module_in)} inputs, keeping only the first one.')
+                if VERBOSE_ROSA_HOOKS:
+                    print(f'found {len(module_in)} inputs, keeping only the first one.')
             module_in = module_in[0]
+
+        saved_input = module_in.detach()
         
         if hasattr(self._module, 'saved_input'):
-            self._module.saved_input = module_in
+            self._module.saved_input = saved_input
         else:
-            self._module.register_buffer('saved_input', module_in)
+            self._module.register_buffer('saved_input', saved_input)
         
-        print(f'saved input for {self._name}')
+        if VERBOSE_ROSA_HOOKS:
+            print(f'saved input for {self._name}')
 
 class ManualGradCollectorHook:
     def __init__(self, name: str, module: RosaLayer, grad_acc_mode: str) -> None:
@@ -57,14 +67,19 @@ class ManualGradCollectorHook:
         self._grad_acc_mode = grad_acc_mode
 
     def __call__(self, model, grad_in, grad_out):
-        print('hook called for', self._name)
+        if VERBOSE_ROSA_HOOKS:
+            print('hook called for', self._name)
         if not isinstance(grad_out, torch.Tensor):
             if len(grad_out) > 1:
-                print(f'found {len(grad_out)} grad_outs, keeping only the first one.')
+                if VERBOSE_ROSA_HOOKS:
+                    print(f'found {len(grad_out)} grad_outs, keeping only the first one.')
             grad_out = grad_out[0]
 
         with torch.no_grad():
             saved_input = self._module.saved_input
+            if saved_input is None:
+                raise RuntimeError(f"missing saved input for RoSA gradient collection hook {self._name}")
+
             new_grad = torch.mm(
                 grad_out.reshape(-1, grad_out.shape[-1]).T,
                 saved_input.reshape(-1, saved_input.shape[-1]),
@@ -86,4 +101,4 @@ class ManualGradCollectorHook:
             self._module.collected_grad = (prev_grad * prev_cnt + new_grad) / new_cnt
             self._module.collected_grad_cnt = new_cnt
 
-            self._module.saved_input.zero_()
+            self._module.saved_input = None
