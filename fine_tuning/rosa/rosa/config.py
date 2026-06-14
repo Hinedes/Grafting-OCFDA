@@ -20,7 +20,7 @@ from typing import List, Literal, Optional, Union
 
 from peft.config import PeftConfig
 from peft.utils import PeftType
-from rosa.rosa.lora_config import LoftQConfig
+from .lora_config import LoftQConfig
 
 @dataclass
 class RosaConfig(PeftConfig):

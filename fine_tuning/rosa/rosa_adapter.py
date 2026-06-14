@@ -5,9 +5,14 @@ from typing import Dict, List
 
 import torch
 import torch.nn as nn
-from rosa.rosa.layer import Linear as RosaLinear      # <- from your vendored package
-from rosa.rosa.layer import RosaLayer
-from rosa.rosa.config import RosaConfig
+try:
+    from .rosa.layer import Linear as RosaLinear
+    from .rosa.layer import RosaLayer
+    from .rosa.config import RosaConfig
+except ImportError:
+    from rosa.layer import Linear as RosaLinear
+    from rosa.layer import RosaLayer
+    from rosa.config import RosaConfig
 
 
 def _set_spa_masks(self, masks: Dict[str, torch.Tensor]):

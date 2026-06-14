@@ -418,11 +418,8 @@ def build_budget_plan(args, spec: RunSpec, target_modules: List[str]) -> dict:
 
 
 def import_rosa_train():
-    rosa_dir = os.path.join(SCRIPT_DIR, "rosa")
     if SCRIPT_DIR not in sys.path:
         sys.path.insert(0, SCRIPT_DIR)
-    if rosa_dir not in sys.path:
-        sys.path.insert(1, rosa_dir)
     from rosa.finetune_rosa import train as train_rosa  # noqa: PLC0415
 
     return train_rosa

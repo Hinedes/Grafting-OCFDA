@@ -52,8 +52,12 @@ from peft import (
     set_peft_model_state_dict,
 )
 
-from rosa_adapter import get_rosa_model, get_rosa_model_state_dict
-from rosa.rosa.scheduler import RosaScheduler
+try:
+    from .rosa_adapter import get_rosa_model, get_rosa_model_state_dict
+    from .rosa.scheduler import RosaScheduler
+except ImportError:
+    from rosa_adapter import get_rosa_model, get_rosa_model_state_dict
+    from rosa.scheduler import RosaScheduler
 
 from src.super import Super
 
