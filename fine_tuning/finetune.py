@@ -484,7 +484,7 @@ def train(
             num_train_epochs=num_epochs,
             learning_rate=learning_rate,
             seed=seed,
-            fp16=True,
+            fp16=adapter_name != "sift",
             logging_steps=10,
             evaluation_strategy="steps" if val_set_size > 0 else "no",
             save_strategy="steps" if save_model else "no",

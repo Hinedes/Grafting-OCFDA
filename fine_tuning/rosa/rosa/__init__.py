@@ -17,11 +17,10 @@ from peft.import_utils import is_bnb_4bit_available, is_bnb_available
 
 from .config import RosaConfig
 from .layer import Embedding, Linear, RosaLayer
-from .model import RosaModel
 from .scheduler import RosaScheduler
 
 
-__all__ = ["RosaConfig", "Conv2d", "Embedding", "RosaLayer", "Linear", "RosaModel"]
+__all__ = ["RosaConfig", "Embedding", "RosaLayer", "Linear", "RosaScheduler"]
 
 
 def __getattr__(name):

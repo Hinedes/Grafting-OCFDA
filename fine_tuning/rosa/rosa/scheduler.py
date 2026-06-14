@@ -1,8 +1,7 @@
 import torch
-from .model import RosaModel
 from .layer import RosaLayer
 from .hooks import SaveInputHook, ManualGradCollectorHook
-from typing import List, Dict
+from typing import Any, List, Dict
 from transformers import TrainerCallback
 
 
@@ -16,7 +15,7 @@ except ImportError:
 
 
 class RosaScheduler(TrainerCallback, COMPOSER_ALG_CLASS):
-    def __init__(self, model: RosaModel) -> None:
+    def __init__(self, model: Any) -> None:
         COMPOSER_ALG_CLASS.__init__(self)
         TrainerCallback.__init__(self)
 
@@ -224,5 +223,4 @@ class RosaScheduler(TrainerCallback, COMPOSER_ALG_CLASS):
             raise SystemExit()
         else:
             self._set_spa_masks(masks)
-
 
