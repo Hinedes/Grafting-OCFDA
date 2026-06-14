@@ -94,6 +94,18 @@ fi
 if [[ -n "${PPL_MAX_EXAMPLES:-}" ]]; then
   EXTRA_ARGS+=(--ppl_max_examples "$PPL_MAX_EXAMPLES")
 fi
+if [[ -n "${ACCURACY_MAX_EXAMPLES:-}" ]]; then
+  EXTRA_ARGS+=(--accuracy_max_examples "$ACCURACY_MAX_EXAMPLES")
+fi
+if [[ -n "${GENERATION_MAX_NEW_TOKENS:-}" ]]; then
+  EXTRA_ARGS+=(--generation_max_new_tokens "$GENERATION_MAX_NEW_TOKENS")
+fi
+if [[ -n "${GENERATION_NUM_BEAMS:-}" ]]; then
+  EXTRA_ARGS+=(--generation_num_beams "$GENERATION_NUM_BEAMS")
+fi
+if [[ "${VERBOSE_GENERATION_EVAL:-0}" == "1" ]]; then
+  EXTRA_ARGS+=(--verbose_generation_eval)
+fi
 if [[ -n "${CALIBRATION_NSAMPLES:-}" ]]; then
   EXTRA_ARGS+=(--calibration_nsamples "$CALIBRATION_NSAMPLES")
 fi

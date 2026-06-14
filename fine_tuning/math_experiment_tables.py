@@ -1079,7 +1079,15 @@ def run_spec_once(
         if full_eval:
             accuracy: Dict[str, float] = {}
             for dataset in datasets:
-                score = eval_model(dataset_name=dataset, model=model, tokenizer=tokenizer) * 100.0
+                score = eval_model(
+                    dataset_name=dataset,
+                    model=model,
+                    tokenizer=tokenizer,
+                    max_examples=args.accuracy_max_examples,
+                    max_new_tokens=args.generation_max_new_tokens,
+                    num_beams=args.generation_num_beams,
+                    verbose=args.verbose_generation_eval,
+                ) * 100.0
                 accuracy[dataset] = score
                 print(f"{dataset} accuracy: {score:.4f}")
             accuracy["Average"] = float(np.mean([accuracy[dataset] for dataset in datasets]))
@@ -1371,6 +1379,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ppl_max_length", type=int, default=256)
     parser.add_argument("--ppl_max_examples", type=int, default=None)
     parser.add_argument("--lr_tuning_max_examples", type=int, default=None)
+    parser.add_argument("--accuracy_max_examples", type=int, default=None)
+    parser.add_argument("--generation_max_new_tokens", type=int, default=256)
+    parser.add_argument("--generation_num_beams", type=int, default=4)
+    parser.add_argument("--verbose_generation_eval", action="store_true")
     parser.add_argument("--val_split_seed", "--lr_tuning_split_seed", dest="val_split_seed", type=int, default=42)
     parser.add_argument("--skip_lr_tuning_metric", action="store_true")
     parser.add_argument(

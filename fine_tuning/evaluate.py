@@ -26,39 +26,48 @@ except:  # noqa: E722
     pass
 
 
-def eval_model(dataset_name, model, tokenizer) -> float:
+def eval_model(
+    dataset_name,
+    model,
+    tokenizer,
+    max_examples=None,
+    max_new_tokens=256,
+    num_beams=4,
+    verbose=False,
+) -> float:
     def evaluate(
             instruction,
             input=None,
-            temperature=0.1,
-            top_p=0.75,
-            top_k=40,
-            num_beams=4,
-            max_new_tokens=256,
             **kwargs,
     ):
         prompt = generate_prompt(instruction, input)
         inputs = tokenizer(prompt, return_tensors="pt")
         input_ids = inputs["input_ids"].to(device)
+        attention_mask = inputs.get("attention_mask")
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(device)
         generation_config = GenerationConfig(
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
             num_beams=num_beams,
+            do_sample=False,
+            pad_token_id=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id,
+            eos_token_id=tokenizer.eos_token_id,
             **kwargs,
         )
         with torch.no_grad():
             generation_output = model.generate(
                 input_ids=input_ids,
+                attention_mask=attention_mask,
                 generation_config=generation_config,
                 return_dict_in_generate=True,
-                output_scores=True,
+                output_scores=False,
                 max_new_tokens=max_new_tokens,
                 use_cache=False,
             )
         s = generation_output.sequences[0]
-        output = tokenizer.decode(s)
-        return output.split("### Response:")[1].strip()
+        output = tokenizer.decode(s, skip_special_tokens=True)
+        if "### Response:" in output:
+            return output.split("### Response:", 1)[1].strip()
+        return output.strip()
 
     """
     # testing code for readme
@@ -79,6 +88,9 @@ def eval_model(dataset_name, model, tokenizer) -> float:
     """
 
     dataset = load_data(dataset_name)
+
+    if max_examples is not None:
+        dataset = dataset[:max_examples]
 
     total = len(dataset)
     correct = 0
@@ -109,12 +121,13 @@ def eval_model(dataset_name, model, tokenizer) -> float:
         new_data['output_pred'] = outputs
         new_data['pred'] = predict
         new_data['flag'] = flag
-        print(' ')
-        print('---------------')
-        print(outputs)
-        print('prediction:', predict)
-        print('label:', label)
-        print('---------------')
+        if verbose:
+            print(' ')
+            print('---------------')
+            print(outputs)
+            print('prediction:', predict)
+            print('label:', label)
+            print('---------------')
 
         accuracy = correct / (idx + 1)
 
