@@ -21,6 +21,8 @@ CALIBRATION_DATA=${CALIBRATION_DATA:-same_as_train}
 MODELS=${MODELS:-meta-llama/Llama-3.2-1B}
 LORA_RS=${LORA_RS:-8}
 SEEDS=${SEEDS:-0}
+DATASETS=${DATASETS:-AddSub,MultiArith,SingleEq,gsm8k,AQuA,SVAMP}
+WORKER_GPUS=${WORKER_GPUS:-0,1,2,3}
 WANDB_PROJECT=${WANDB_PROJECT:-super-supra-math}
 WANDB_GROUP=${WANDB_GROUP:-math-r8-llama3p2-1b-main}
 WANDB_TAGS=${WANDB_TAGS:-math10k,llama3.2-1b,r8,orix,h200}
@@ -65,6 +67,18 @@ fi
 if [[ -n "${TRAIN_DATA:-}" ]]; then
   EXTRA_ARGS+=(--train_data "$TRAIN_DATA")
 fi
+if [[ -n "${TARGET_MODULES:-}" ]]; then
+  EXTRA_ARGS+=(--target_modules "$TARGET_MODULES")
+fi
+if [[ -n "${BATCH_SIZE:-}" ]]; then
+  EXTRA_ARGS+=(--batch_size "$BATCH_SIZE")
+fi
+if [[ -n "${MICRO_BATCH_SIZE:-}" ]]; then
+  EXTRA_ARGS+=(--micro_batch_size "$MICRO_BATCH_SIZE")
+fi
+if [[ -n "${VAL_SET_SIZE:-}" ]]; then
+  EXTRA_ARGS+=(--val_set_size "$VAL_SET_SIZE")
+fi
 if [[ -n "${MAX_STEPS:-}" ]]; then
   EXTRA_ARGS+=(--max_steps "$MAX_STEPS")
 fi
@@ -80,9 +94,16 @@ fi
 if [[ -n "${PPL_MAX_EXAMPLES:-}" ]]; then
   EXTRA_ARGS+=(--ppl_max_examples "$PPL_MAX_EXAMPLES")
 fi
+if [[ -n "${CALIBRATION_NSAMPLES:-}" ]]; then
+  EXTRA_ARGS+=(--calibration_nsamples "$CALIBRATION_NSAMPLES")
+fi
+if [[ -n "${WANDB_MODE:-}" ]]; then
+  EXTRA_ARGS+=(--wandb_mode "$WANDB_MODE")
+fi
 
 python launch_math_methods.py \
-  --gpus 0,1,2,3 \
+  --gpus "$WORKER_GPUS" \
+  --datasets "$DATASETS" \
   --base_out_dir "$OUT" \
   --base_checkpoint_dir "$CKPT" \
   --models "$MODELS" \

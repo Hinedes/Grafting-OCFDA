@@ -6,6 +6,8 @@ black[jupyter]
 datasets
 fire
 pandas
+scipy
+spops==0.2.1
 wandb
 transformers
 gradio

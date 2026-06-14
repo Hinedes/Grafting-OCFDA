@@ -1,7 +1,24 @@
 import torch
 import torch.nn as nn
-import numpy as np
-import random
+
+
+def _random_flat_indices(num_elements: int, train_num: int, device: torch.device) -> torch.Tensor:
+    if train_num <= 0:
+        return torch.empty(0, dtype=torch.long, device=device)
+    if train_num >= num_elements:
+        return torch.arange(num_elements, dtype=torch.long, device=device)
+
+    selected = torch.empty(0, dtype=torch.long, device=device)
+    while selected.numel() < train_num:
+        remaining = train_num - selected.numel()
+        sample_count = min(num_elements, max(remaining + remaining // 10 + 16, remaining))
+        sample = torch.randint(0, num_elements, (sample_count,), dtype=torch.long, device=device)
+        selected = torch.unique(torch.cat([selected, sample]))
+    return selected[:train_num]
+
+
+def _flat_to_parameter_indices(flat_indices: torch.Tensor, shape: torch.Size) -> torch.Tensor:
+    return torch.stack(torch.unravel_index(flat_indices.to(torch.long), shape))
 
 class SIFT():
     def __init__(self, model, sparse_module, sparse_rate: float, exception=[], grad_acc=1, gradient_checkpointing=False, random_indices=False) -> None:
@@ -62,9 +79,8 @@ class SIFT():
                 ## pick the components that have top-k maximun absolute values 
                 #sparse_idx = torch.flatten(abs(param.data)).topk(train_num).indices
                 ## Random pick
-                sparse_idx = torch.tensor(random.sample(list(range(param.numel())), train_num), dtype=torch.int)
-                
-                sparse_param.idx = torch.stack(torch.unravel_index(sparse_idx, param.shape))
+                sparse_idx = _random_flat_indices(param.numel(), train_num, param.device)
+                sparse_param.idx = _flat_to_parameter_indices(sparse_idx, param.shape)
                 ## help the initial parameter to find the sparse parameter 
                 self.sparse_mapping[name] = sparse_param
                 self.grad_acc_count[name] = 0
@@ -72,7 +88,7 @@ class SIFT():
                 self.record[name] = []
                 
                 # ## register a backward hook to get the 'sparse' grad
-                param.register_hook(self.get_sparse_grad())
+                param.register_hook(self.get_sparse_grad(name, param))
                 
                 ## register it in the model so the framework can recognized the sparse param as a 'normal' param 
                 setattr(self.model, name.replace('.', '_') + '_sparse', sparse_param)
@@ -121,61 +137,58 @@ class SIFT():
         self.trainer = trainer
         self.grad_acc = trainer.args.gradient_accumulation_steps
         
-    def get_sparse_grad(self):
+    def get_sparse_grad(self, name, param):
         """use closure function to access the param in the backward hook
         """
-        def hook(x):
+        def hook(grad):
             with torch.no_grad():
+                sparse_param = self.sparse_mapping[name]
+                grad = grad.to(device=sparse_param.device, dtype=sparse_param.dtype)
 
-                for name, param in self.named_trainable_parameters():
-                    if not (name in self.sparse_mapping.keys()) or param.grad is None:
-                        continue
-
-                    # print(name)
-                    sparse_param = self.sparse_mapping[name]
-                    grad = param.grad.to(sparse_param)
-
-                    ## clean the init grad
-                    param.grad = None
-                    # if self.trainer.state.epoch ==0.:
-                    if not self.if_get_idx[name]:
-                        self.if_get_idx[name] = True
-                        if not self.random_indices:
-                            sparse_idx = torch.flatten(abs(grad)).topk(sparse_param.train_num).indices.cpu().numpy()
-                        else:
-                            sparse_idx = np.random.choice(param.numel(), sparse_param.train_num, replace=False)
-                        if name == list(self.sparse_mapping.keys())[-1]:
-                            print('switch idx')
-                            # self.trainer.create_optimizer()
-                            # print(sparse_param.idx)
-                        sparse_param.idx = np.stack(np.unravel_index(sparse_idx, param.shape))
-                        return
-
-                    # ##if you are interested in grad proportion, uncomment following code
-                    '''
-                    grad_norm = torch.norm(grad).cpu().numpy().item()
-                    sparse_grad_norm = torch.norm(grad[sparse_param.idx]).cpu().numpy().item()
-                    grad_proportion = sparse_grad_norm/grad_norm*100
-                    self.record[n].append((grad_norm, grad_proportion))
-                    # print(f"{n} grad proportion: {grad_proportion:.2f}")
-                    '''
-
-                    ## get the sparse grad
-                    if sparse_param.grad != None:
-                        sparse_param.grad += grad[sparse_param.idx[0], sparse_param.idx[1]]
+                # if self.trainer.state.epoch ==0.:
+                if not self.if_get_idx[name]:
+                    self.if_get_idx[name] = True
+                    if not self.random_indices:
+                        sparse_idx = torch.flatten(abs(grad).float()).topk(sparse_param.train_num).indices
                     else:
-                        sparse_param.grad = grad[sparse_param.idx[0], sparse_param.idx[1]]
+                        sparse_idx = _random_flat_indices(param.numel(), sparse_param.train_num, grad.device)
+                    sparse_param.idx = _flat_to_parameter_indices(sparse_idx, param.shape).to(param.device)
+                    return torch.zeros_like(grad)
 
-                    self.grad_acc_count[name] += 1
-                    if self.grad_acc_count[name] == self.grad_acc:
-                        ## update the initial param sparsely
-                        delta = param.data + torch.sparse_coo_tensor(sparse_param.idx, sparse_param, param.shape).to(param)
-                        param.data.copy_(delta)
-                        sparse_param.zero_()
-                        self.grad_acc_count[name] = 0
-                        # print('sparse update!')
-                            
-                            
+                # ##if you are interested in grad proportion, uncomment following code
+                '''
+                grad_norm = torch.norm(grad).cpu().numpy().item()
+                sparse_grad_norm = torch.norm(grad[sparse_param.idx[0], sparse_param.idx[1]]).cpu().numpy().item()
+                grad_proportion = sparse_grad_norm/grad_norm*100
+                self.record[n].append((grad_norm, grad_proportion))
+                # print(f"{n} grad proportion: {grad_proportion:.2f}")
+                '''
+
+                idx = sparse_param.idx.to(grad.device)
+                sparse_grad = grad[tuple(idx)]
+
+                ## get the sparse grad
+                if sparse_param.grad is not None:
+                    sparse_param.grad = sparse_param.grad + sparse_grad
+                else:
+                    sparse_param.grad = sparse_grad.clone()
+
+                self.grad_acc_count[name] += 1
+                if self.grad_acc_count[name] == self.grad_acc:
+                    ## update the initial param sparsely
+                    sparse_delta = torch.sparse_coo_tensor(
+                        sparse_param.idx.to(param.device),
+                        sparse_param.detach().to(device=param.device, dtype=param.dtype),
+                        size=param.shape,
+                        dtype=param.dtype,
+                        device=param.device,
+                    ).to_dense()
+                    param.data.add_(sparse_delta)
+                    sparse_param.data.zero_()
+                    self.grad_acc_count[name] = 0
+                    # print('sparse update!')
+            return torch.zeros_like(grad)
+
         return hook
                     
             
