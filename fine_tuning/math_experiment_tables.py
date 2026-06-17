@@ -335,22 +335,31 @@ def supra_param_count(
     return total
 
 
-def parse_method(method: str) -> Tuple[str, bool, float]:
+def parse_method(method: str) -> Tuple[str, str, float]:
     if method == "base":
-        return "base", False, 0.0
+        return "base", "none", 0.0
     if method == "lora":
-        return "lora", False, 0.0
+        return "lora", "none", 0.0
     if method == "rosa":
-        return "rosa", False, 0.0
+        return "rosa", "none", 0.0
     if method.startswith("sift"):
-        return "sift", "rand" in method, 0.0
+        return "sift", "random" if "rand" in method else "super", 0.0
     if method.startswith("super"):
-        return "super", "rand" in method, 0.0
+        if "rand" in method:
+            return "super", "random", 0.0
+        if "bottom" in method:
+            return "super", "super-bottom", 0.0
+        return "super", "super", 0.0
     if method.startswith("supra"):
         pieces = method.split("-", 1)
         if len(pieces) != 2:
             raise ValueError("Supra method names must look like 'supra-0.3'.")
-        return "supra", "rand" in method, float(pieces[1].replace("rand-", ""))
+        mask_choice = "random" if "rand" in method else "super"
+        ratio_text = pieces[1].replace("rand-", "")
+        if ratio_text.endswith("-bottom"):
+            mask_choice = "super-bottom"
+            ratio_text = ratio_text.removesuffix("-bottom")
+        return "supra", mask_choice, float(ratio_text)
     raise ValueError(f"Unknown method: {method}")
 
 
@@ -447,7 +456,8 @@ def collect_trainable_param_report(model, budget_plan: dict) -> dict:
 
 
 def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[str]):
-    adapter_name, random_indices, lora_params_ratio = parse_method(spec.method)
+    adapter_name, mask_choice, lora_params_ratio = parse_method(spec.method)
+    random_indices = mask_choice == "random"
     output_dir = os.path.join(args.checkpoint_dir, spec.run_id)
     calibration_data = args.train_data if args.calibration_data == "same_as_train" else args.calibration_data
     if adapter_name == "rosa":
@@ -506,6 +516,8 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
             calibration_nsamples=args.calibration_nsamples,
             calibration_seed=args.calibration_seed,
         )
+        if adapter_name in {"super", "supra"}:
+            common_kwargs["mask_choice"] = mask_choice
 
     if args.dry_run:
         print("DRY RUN:", json.dumps({**common_kwargs, "target_modules": target_modules}, indent=2, default=str))

@@ -154,7 +154,12 @@ def train(
         # SIFT params
         sparse_exception=[],
         random_indices=False,
+        mask_choice=None,
 ):
+    if mask_choice is None:
+        mask_choice = "random" if random_indices else "super"
+    if mask_choice not in {"random", "super", "super-bottom"}:
+        raise ValueError("mask_choice must be 'random', 'super', or 'super-bottom'.")
     compile = bool(compile)
     sparse_module = target_modules
     print(
@@ -199,6 +204,7 @@ def train(
         f"save_model: {save_model}\n"
         f"sparse_exception: {sparse_exception}\n"
         f"random_indices: {random_indices}\n"
+        f"mask_choice: {mask_choice}\n"
         f"calibration_data: {calibration_data}\n"
         f"calibration_nsamples: {calibration_nsamples}\n"
         f"calibration_seed: {calibration_seed}\n"
@@ -353,7 +359,7 @@ def train(
             model,
             target_modules_list=target_modules,
             sparse_rate=sparse_rate,
-            indices_choice="random" if random_indices else "super",
+            indices_choice=mask_choice,
             tokenizer=tokenizer,
             exception=sparse_exception,
             calibration_data=calibration_data,
@@ -372,7 +378,7 @@ def train(
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
             target_modules_list=target_modules,
-            indices_choice="random" if random_indices else "super",
+            indices_choice=mask_choice,
             tokenizer=tokenizer,
             exception=sparse_exception,
             calibration_data=calibration_data,

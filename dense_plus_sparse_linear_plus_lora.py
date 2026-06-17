@@ -86,7 +86,7 @@ def get_dense_plus_sparse_plus_lora_model(model,
                                           calibration_seed=228):
     if exception is None:
         exception = []
-    if indices_choice == "super":
+    if indices_choice in {"super", "super-bottom"}:
         assert tokenizer is not None, "`Super` option requires tokenizer to determine outliers indices."
         prepare_super_mask(
             model,
@@ -96,6 +96,7 @@ def get_dense_plus_sparse_plus_lora_model(model,
             nsamples=calibration_nsamples,
             seed=calibration_seed,
             calibration_data=calibration_data,
+            metric_order="bottom" if indices_choice == "super-bottom" else "top",
         )
 
     def _get_submodules(key):
@@ -104,8 +105,8 @@ def get_dense_plus_sparse_plus_lora_model(model,
         target = model.get_submodule(key)
         return parent, target, target_name
 
-    if indices_choice not in {"random", "super"}:
-        raise ValueError("indices_choice must be either 'random' or 'super'.")
+    if indices_choice not in {"random", "super", "super-bottom"}:
+        raise ValueError("indices_choice must be 'random', 'super', or 'super-bottom'.")
 
     replaced_modules = 0
     total_indices = 0
@@ -113,10 +114,11 @@ def get_dense_plus_sparse_plus_lora_model(model,
 
     def _replace_module(parent_module, child_name, old_module):
         nonlocal replaced_modules, total_indices, total_unique_indices
-        if indices_choice == "super":
-            indices = getattr(old_module.weight, "wanda_topk_indices", None)
+        if indices_choice in {"super", "super-bottom"}:
+            attr_name = "wanda_bottomk_indices" if indices_choice == "super-bottom" else "wanda_topk_indices"
+            indices = getattr(old_module.weight, attr_name, None)
             if indices is None:
-                raise RuntimeError("Wanda indices were not prepared for a Supra sparse layer.")
+                raise RuntimeError(f"Wanda indices were not prepared for a Supra sparse layer ({attr_name}).")
         else:
             indices = None
         new_module = SparseDenseLoraLinear(old_module,
@@ -139,7 +141,7 @@ def get_dense_plus_sparse_plus_lora_model(model,
 
     print(
         "Sparse mask source:",
-        "wanda" if indices_choice == "super" else "random",
+        {"super": "wanda-top", "super-bottom": "wanda-bottom", "random": "random"}[indices_choice],
         "replaced modules:",
         replaced_modules,
         "sparse entries:",

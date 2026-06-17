@@ -61,7 +61,10 @@ def prepare_super_mask(
         outliers_ratio=None,
         collect_stats=False,
         max_layers=None,
+        metric_order="top",
 ):
+    if metric_order not in {"top", "bottom"}:
+        raise ValueError("metric_order must be either 'top' or 'bottom'.")
     if sparse_rate is None:
         sparse_rate = outliers_ratio
     if sparse_rate is None:
@@ -73,6 +76,7 @@ def prepare_super_mask(
         "actual_nsamples": 0,
         "seed": seed,
         "sparse_rate": float(sparse_rate),
+        "metric_order": metric_order,
         "layers": [],
     } if collect_stats else None
 
@@ -174,16 +178,26 @@ def prepare_super_mask(
             #train_num = (out_features + in_features) * r
             train_num = min(int(sparse_rate * subset[name].weight.numel()) + 1, subset[name].weight.numel())
 
-            topk_indices = torch.topk(flat_tensor, k=train_num).indices
-            subset[name].weight.wanda_topk_indices = topk_indices.cpu()
+            selected_indices = torch.topk(
+                flat_tensor,
+                k=train_num,
+                largest=(metric_order == "top"),
+            ).indices
+            selected_indices_cpu = selected_indices.cpu()
+            subset[name].weight.wanda_selected_indices = selected_indices_cpu
+            if metric_order == "top":
+                subset[name].weight.wanda_topk_indices = selected_indices_cpu
+            else:
+                subset[name].weight.wanda_bottomk_indices = selected_indices_cpu
 
             if stats is not None:
                 scaler = wrappers[name].scaler_row.detach()
-                selected_metric = flat_tensor[topk_indices].detach()
+                selected_metric = flat_tensor[selected_indices].detach()
                 stats["layers"].append(
                     {
                         "layer": int(i),
                         "name": name,
+                        "metric_order": metric_order,
                         "weight_shape": [int(dim) for dim in subset[name].weight.shape],
                         "train_num": int(train_num),
                         "numel": int(subset[name].weight.numel()),
@@ -203,7 +217,7 @@ def prepare_super_mask(
                         "selected_metric_min": float(selected_metric.min().item()),
                         "selected_metric_mean": float(selected_metric.mean().item()),
                         "selected_metric_max": float(selected_metric.max().item()),
-                        "selected_unique_count": int(torch.unique(topk_indices).numel()),
+                        "selected_unique_count": int(torch.unique(selected_indices).numel()),
                     }
                 )
 
