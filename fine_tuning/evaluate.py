@@ -53,16 +53,22 @@ def eval_model(
             eos_token_id=tokenizer.eos_token_id,
             **kwargs,
         )
-        with torch.no_grad():
-            generation_output = model.generate(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                generation_config=generation_config,
-                return_dict_in_generate=True,
-                output_scores=False,
-                max_new_tokens=max_new_tokens,
-                use_cache=False,
-            )
+        previous_use_cache = getattr(model.config, "use_cache", None)
+        model.config.use_cache = True
+        try:
+            with torch.no_grad():
+                generation_output = model.generate(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    generation_config=generation_config,
+                    return_dict_in_generate=True,
+                    output_scores=False,
+                    max_new_tokens=max_new_tokens,
+                    use_cache=True,
+                )
+        finally:
+            if previous_use_cache is not None:
+                model.config.use_cache = previous_use_cache
         s = generation_output.sequences[0]
         output = tokenizer.decode(s, skip_special_tokens=True)
         if "### Response:" in output:
