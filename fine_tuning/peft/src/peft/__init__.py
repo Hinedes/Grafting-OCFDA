@@ -27,6 +27,11 @@ from .peft_model import (
     PeftModelForSequenceClassification,
     PeftModelForTokenClassification,
 )
+
+# Compatibility shim for newer Transformers versions. This PEFT fork predates
+# mixed adapters, but Trainer only needs the symbol for an isinstance check.
+PeftMixedModel = PeftModel
+
 from .tuners import (
     LoraConfig,
     LoraModel,
