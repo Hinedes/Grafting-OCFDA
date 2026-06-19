@@ -34,6 +34,8 @@ def eval_model(
     max_new_tokens=256,
     num_beams=4,
     verbose=False,
+    progress_path=None,
+    resume_progress=True,
 ) -> float:
     def evaluate(
             instruction,
@@ -99,13 +101,24 @@ def eval_model(
         dataset = dataset[:max_examples]
 
     total = len(dataset)
-    correct = 0
+    completed = _load_eval_progress(progress_path, total) if resume_progress else {}
+    correct = sum(1 for row in completed.values() if row.get("flag"))
+    completed_count = len(completed)
     miss = 0.001
-    pbar = tqdm(total=total)
+    pbar = tqdm(total=total, initial=completed_count)
 
-    accuracy = 0.0
+    if progress_path:
+        if completed_count:
+            print(f"Resuming {dataset_name} eval from {completed_count}/{total}: {progress_path}")
+        else:
+            print(f"Writing {dataset_name} eval progress to: {progress_path}")
+
+    accuracy = correct / completed_count if completed_count else 0.0
 
     for idx, data in enumerate(dataset):
+        if idx in completed:
+            continue
+
         instruction = data.get('instruction')
 
         outputs = evaluate(instruction)
@@ -127,6 +140,10 @@ def eval_model(
         new_data['output_pred'] = outputs
         new_data['pred'] = predict
         new_data['flag'] = flag
+        new_data['idx'] = idx
+        new_data['dataset'] = dataset_name
+        new_data['total'] = total
+        _append_eval_progress(progress_path, new_data)
         if verbose:
             print(' ')
             print('---------------')
@@ -135,15 +152,53 @@ def eval_model(
             print('label:', label)
             print('---------------')
 
-        accuracy = correct / (idx + 1)
+        completed_count += 1
+        accuracy = correct / completed_count
 
-        print(f'\rtest:{idx + 1}/{total} | accuracy {correct}  {accuracy}')
+        print(f'\rtest:{completed_count}/{total} | accuracy {correct}  {accuracy}')
         pbar.update(1)
     pbar.close()
     print('\n')
     print('test finished')
 
     return accuracy
+
+
+def _load_eval_progress(progress_path, total):
+    completed = {}
+    if not progress_path or not os.path.exists(progress_path):
+        return completed
+    with open(progress_path, "r") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            idx = row.get("idx")
+            if not isinstance(idx, int) or idx < 0 or idx >= total:
+                continue
+            if "flag" not in row:
+                continue
+            completed[idx] = row
+    return completed
+
+
+def _append_eval_progress(progress_path, row):
+    if not progress_path:
+        return
+    os.makedirs(os.path.dirname(progress_path), exist_ok=True)
+    prefix = ""
+    if os.path.exists(progress_path) and os.path.getsize(progress_path) > 0:
+        with open(progress_path, "rb") as f:
+            f.seek(-1, os.SEEK_END)
+            if f.read(1) != b"\n":
+                prefix = "\n"
+    with open(progress_path, "a") as f:
+        f.write(prefix + json.dumps(row, sort_keys=True) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
 
 
 def load_model_and_eval(dataset_name, model_name, adapter, base_model, lora_weights, load_8bit, target_modules, r) -> float:

@@ -1034,6 +1034,10 @@ def print_spec_header(spec: RunSpec, budget_plan: dict, stage: str) -> None:
     print("train_sparse_rate:", budget_plan["train_sparse_rate"])
 
 
+def eval_progress_path(out_dir: str, spec: RunSpec, dataset: str) -> str:
+    return os.path.join(out_dir, "eval_progress", spec.run_id, f"{dataset}.jsonl")
+
+
 def run_spec_once(
     args,
     spec: RunSpec,
@@ -1090,6 +1094,7 @@ def run_spec_once(
 
         if full_eval:
             accuracy: Dict[str, float] = {}
+            row["eval_progress_dir"] = os.path.join(args.out_dir, "eval_progress", spec.run_id)
             for dataset in datasets:
                 score = eval_model(
                     dataset_name=dataset,
@@ -1099,6 +1104,7 @@ def run_spec_once(
                     max_new_tokens=args.generation_max_new_tokens,
                     num_beams=args.generation_num_beams,
                     verbose=args.verbose_generation_eval,
+                    progress_path=eval_progress_path(args.out_dir, spec, dataset),
                 ) * 100.0
                 accuracy[dataset] = score
                 print(f"{dataset} accuracy: {score:.4f}")
