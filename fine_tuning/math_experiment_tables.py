@@ -338,6 +338,8 @@ def supra_param_count(
 def parse_method(method: str) -> Tuple[str, str, float]:
     if method == "base":
         return "base", "none", 0.0
+    if method in {"full", "full-ft", "fft"}:
+        return "full", "none", 0.0
     if method == "lora":
         return "lora", "none", 0.0
     if method == "rosa":
@@ -381,6 +383,10 @@ def build_budget_plan(args, spec: RunSpec, target_modules: List[str]) -> dict:
         train_sparse_rate = 0.0
         train_lora_r = 0
         adapter_params = 0
+    elif adapter_name == "full":
+        train_sparse_rate = 0.0
+        train_lora_r = 0
+        adapter_params = None
     elif adapter_name == "lora":
         train_sparse_rate = 0.0
         adapter_params = reference_lora_params
@@ -399,13 +405,13 @@ def build_budget_plan(args, spec: RunSpec, target_modules: List[str]) -> dict:
     else:
         raise ValueError(f"Unsupported adapter for budget planning: {adapter_name}")
 
-    if adapter_name == "base":
+    if adapter_name in {"base", "full"}:
         budget_error_pct = 0.0
     elif reference_lora_params == 0:
         budget_error_pct = 0.0
     else:
         budget_error_pct = 100.0 * (adapter_params - reference_lora_params) / reference_lora_params
-    if adapter_name != "base" and abs(budget_error_pct) > args.budget_tolerance_pct:
+    if adapter_name not in {"base", "full"} and abs(budget_error_pct) > args.budget_tolerance_pct:
         raise ValueError(
             f"{spec.method} budget differs from the rank-{spec.lora_r} LoRA reference by "
             f"{budget_error_pct:.2f}% ({adapter_params} vs {reference_lora_params} params). "
@@ -423,6 +429,7 @@ def build_budget_plan(args, spec: RunSpec, target_modules: List[str]) -> dict:
         "adapter_trainable_params_estimate": adapter_params,
         "adapter_budget_error_pct": budget_error_pct,
         "is_baseline": adapter_name == "base",
+        "is_unbudgeted": adapter_name == "full",
     }
 
 
@@ -440,7 +447,7 @@ def collect_trainable_param_report(model, budget_plan: dict) -> dict:
     if optimizer_params is None:
         optimizer_params = requires_grad_params
     reference_params = budget_plan["reference_lora_params"]
-    if budget_plan.get("is_baseline"):
+    if budget_plan.get("is_baseline") or budget_plan.get("is_unbudgeted"):
         trainable_budget_error_pct = 0.0
     elif reference_params:
         trainable_budget_error_pct = 100.0 * (optimizer_params - reference_params) / reference_params
@@ -450,7 +457,11 @@ def collect_trainable_param_report(model, budget_plan: dict) -> dict:
     return {
         "trainable_params": int(optimizer_params),
         "requires_grad_params": int(requires_grad_params),
-        "budget_trainable_params": int(budget_plan["adapter_trainable_params_estimate"]),
+        "budget_trainable_params": int(
+            budget_plan["adapter_trainable_params_estimate"]
+            if budget_plan["adapter_trainable_params_estimate"] is not None
+            else optimizer_params
+        ),
         "trainable_budget_error_pct": float(trainable_budget_error_pct),
     }
 
@@ -462,6 +473,7 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
     calibration_data = args.train_data if args.calibration_data == "same_as_train" else args.calibration_data
     if adapter_name == "rosa":
         lora_params_ratio = args.rosa_lora_budget_ratio
+    train_adapter_name = "no" if adapter_name == "full" else adapter_name
 
     if adapter_name == "base":
         tokenizer = AutoTokenizer.from_pretrained(spec.model, trust_remote_code=True)
@@ -502,12 +514,12 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
         seed=spec.seed,
         lora_r=budget_plan["train_lora_r"],
         lora_params_ratio=lora_params_ratio,
-        adapter_name=adapter_name,
+        adapter_name=train_adapter_name,
         random_indices=random_indices,
         max_steps=args.max_steps,
         warmup_steps=args.warmup_steps,
         optimizer_name=args.optimizer_name,
-        save_model=args.save_adapters,
+        save_model=args.save_adapters and adapter_name != "full",
     )
     training_curve_dir = getattr(args, "training_curve_dir", "")
     if training_curve_dir:
@@ -1060,6 +1072,20 @@ def eval_progress_path(out_dir: str, spec: RunSpec, dataset: str) -> str:
     return os.path.join(out_dir, "eval_progress", spec.run_id, f"{dataset}.jsonl")
 
 
+def save_full_model_checkpoint(model, tokenizer, checkpoint_dir: str) -> None:
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    previous_use_cache = getattr(model.config, "use_cache", None)
+    if previous_use_cache is not None:
+        model.config.use_cache = True
+    try:
+        model.save_pretrained(checkpoint_dir)
+        tokenizer.save_pretrained(checkpoint_dir)
+    finally:
+        if previous_use_cache is not None:
+            model.config.use_cache = previous_use_cache
+    print("Saved full-model checkpoint to:", checkpoint_dir)
+
+
 def run_spec_once(
     args,
     spec: RunSpec,
@@ -1091,6 +1117,12 @@ def run_spec_once(
                 f"({trainable_param_report['trainable_params']} vs {budget_plan['reference_lora_params']} params)."
             )
 
+        adapter_name, _, _ = parse_method(spec.method)
+        full_model_checkpoint_saved = False
+        if adapter_name == "full" and full_eval:
+            save_full_model_checkpoint(model, tokenizer, checkpoint_dir)
+            full_model_checkpoint_saved = True
+
         lr_tuning = {}
         if lr_tuning_records is not None:
             tune_ppl, tune_nll, tune_count = evaluate_perplexity_on_records(
@@ -1113,6 +1145,8 @@ def run_spec_once(
             lr_tuning=lr_tuning,
             eval_stage=stage,
         )
+        if full_model_checkpoint_saved:
+            row["full_model_checkpoint_saved"] = True
 
         if full_eval:
             accuracy: Dict[str, float] = {}
