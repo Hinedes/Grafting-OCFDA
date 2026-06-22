@@ -509,6 +509,26 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
         optimizer_name=args.optimizer_name,
         save_model=args.save_adapters,
     )
+    training_curve_dir = getattr(args, "training_curve_dir", "")
+    if training_curve_dir:
+        training_curve_path = os.path.join(training_curve_dir, f"{spec.run_id}.jsonl")
+        common_kwargs["training_curve_path"] = training_curve_path
+        common_kwargs["training_curve_metadata"] = {
+            "run_id": spec.run_id,
+            "model": spec.model,
+            "method": spec.method,
+            "lr": spec.lr,
+            "seed": spec.seed,
+            "budget_lora_r": spec.lora_r,
+            "train_lora_r": budget_plan["train_lora_r"],
+            "train_sparse_rate": budget_plan["train_sparse_rate"],
+            "component_lora_ratio": budget_plan["component_lora_ratio"],
+            "target_modules": target_modules,
+            "calibration_data": calibration_data if adapter_name != "rosa" else None,
+        }
+    logging_steps = getattr(args, "logging_steps", None)
+    if logging_steps is not None:
+        common_kwargs["logging_steps"] = logging_steps
 
     if adapter_name != "rosa":
         common_kwargs.update(

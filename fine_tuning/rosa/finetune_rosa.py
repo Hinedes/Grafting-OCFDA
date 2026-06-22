@@ -68,6 +68,7 @@ from dense_plus_sparse_linear import get_dense_plus_sparse_model, get_sparse_den
 from dense_plus_sparse_linear_plus_lora import get_dense_plus_sparse_plus_lora_model, \
     get_sparse_dense_lora_model_state_dict
 from custom_lora import get_custom_lora_model, get_custom_lora_model_state_dict
+from training_curve_utils import TrainingCurveCallback
 
 
 def compute_sparse_rate(model, target_modules):
@@ -152,6 +153,9 @@ def train(
         # debug params
         max_steps=-1,
         save_model: bool = True,
+        logging_steps: int = 10,
+        training_curve_path: str = "",
+        training_curve_metadata: Optional[dict] = None,
 
         # SIFT params
         sparse_exception=[],
@@ -386,12 +390,16 @@ def train(
 
     if not int(os.environ.get("LOCAL_RANK", 0)):
         ddp_find_unused_parameters = False if ddp and adapter_name not in ["sift"] else True
+    trainer_callbacks = [rosa_scheduler] if rosa_scheduler is not None else []
+    if training_curve_path:
+        trainer_callbacks.append(TrainingCurveCallback(training_curve_path, training_curve_metadata))
+
     trainer = Trainer(
         model=model,
         train_dataset=train_data,
         eval_dataset=val_data,
         optimizers=(optimizer, None),
-        callbacks=[rosa_scheduler] if rosa_scheduler is not None else None,
+        callbacks=trainer_callbacks or None,
         args=transformers.TrainingArguments(
             per_device_train_batch_size=micro_batch_size,
             per_device_eval_batch_size=micro_batch_size,
@@ -401,7 +409,7 @@ def train(
             learning_rate=learning_rate,
             seed=seed,
             fp16=True,
-            logging_steps=10,
+            logging_steps=logging_steps,
             evaluation_strategy="steps" if val_set_size > 0 else "no",
             save_strategy="steps" if save_model else "no",
             eval_steps=eval_step if val_set_size > 0 else None,
