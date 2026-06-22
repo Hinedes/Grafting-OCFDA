@@ -154,6 +154,7 @@ def train(
         logging_steps: int = 10,
         training_curve_path: str = "",
         training_curve_metadata: Optional[dict] = None,
+        bf16: bool = False,
 
         # SIFT params
         sparse_exception=[],
@@ -500,6 +501,7 @@ def train(
             learning_rate=learning_rate,
             seed=seed,
             fp16=adapter_name != "sift",
+            bf16=bf16,
             logging_steps=logging_steps,
             evaluation_strategy="steps" if val_set_size > 0 else "no",
             save_strategy="steps" if save_model else "no",

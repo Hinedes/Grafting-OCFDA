@@ -272,6 +272,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_steps", type=int, default=-1)
     parser.add_argument("--warmup_steps", type=int, default=100)
     parser.add_argument("--logging_steps", type=int, default=10)
+    parser.add_argument("--bf16", action="store_true")
     parser.add_argument("--sparse_rate_override", type=float, default=None)
     parser.add_argument("--rosa_lora_budget_ratio", type=float, default=0.5)
     parser.add_argument("--budget_tolerance_pct", type=float, default=3.0)

@@ -71,6 +71,10 @@ fi
 if [[ -n "${CALIBRATION_NSAMPLES:-}" ]]; then
   EXTRA_ARGS+=(--calibration_nsamples "$CALIBRATION_NSAMPLES")
 fi
+if [[ "${BF16:-0}" == "1" ]]; then
+  EXTRA_ARGS+=(--bf16)
+  export ACCELERATE_MIXED_PRECISION=bf16
+fi
 if [[ "${SAVE_ADAPTERS:-0}" == "1" ]]; then
   EXTRA_ARGS+=(--save_adapters)
 fi

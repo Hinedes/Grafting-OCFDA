@@ -18,12 +18,12 @@ METHOD_LABELS = {
     "super-rand": "Sparse RandK",
     "super-wanda": "Super (TopK)",
     "super-wanda-bottom": "Super (BottomK)",
-    "supra-0.3": "Supra (TopK, lambda=0.3)",
-    "supra-0.5": "Supra (TopK, lambda=0.5)",
-    "supra-0.8": "Supra (TopK, lambda=0.8)",
-    "supra-0.3-bottom": "Supra (BottomK, lambda=0.3)",
-    "supra-0.5-bottom": "Supra (BottomK, lambda=0.5)",
-    "supra-0.8-bottom": "Supra (BottomK, lambda=0.8)",
+    "supra-0.3": r"Supra (TopK, $\lambda=0.3$)",
+    "supra-0.5": r"Supra (TopK, $\lambda=0.5$)",
+    "supra-0.8": r"Supra (TopK, $\lambda=0.8$)",
+    "supra-0.3-bottom": r"Supra (BottomK, $\lambda=0.3$)",
+    "supra-0.5-bottom": r"Supra (BottomK, $\lambda=0.5$)",
+    "supra-0.8-bottom": r"Supra (BottomK, $\lambda=0.8$)",
 }
 
 
@@ -35,6 +35,18 @@ def safe_name(value: str) -> str:
     value = value.split("/")[-1]
     value = value.replace(".", "_")
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value)
+
+
+def latex_float(value: float) -> str:
+    if value == 0:
+        return "0"
+    if abs(value) < 1e-2 or abs(value) >= 1e3:
+        mantissa, exponent = f"{value:.0e}".split("e")
+        exponent = int(exponent)
+        if mantissa == "1":
+            return rf"10^{{{exponent}}}"
+        return rf"{mantissa}\times 10^{{{exponent}}}"
+    return f"{value:g}"
 
 
 def iter_curve_files(roots: Iterable[str]):
@@ -74,7 +86,14 @@ def load_curves(roots: List[str]) -> pd.DataFrame:
     return df
 
 
-def plot_one(df: pd.DataFrame, output_path: str, metric: str, max_step: int, smooth_window: int) -> None:
+def plot_one(
+    df: pd.DataFrame,
+    output_path: str,
+    metric: str,
+    max_step: int,
+    smooth_window: int,
+    yscale: str,
+) -> None:
     if max_step > 0:
         df = df[df["step"] <= max_step].copy()
     if df.empty:
@@ -88,12 +107,13 @@ def plot_one(df: pd.DataFrame, output_path: str, metric: str, max_step: int, smo
         y = group[metric]
         if smooth_window > 1:
             y = y.rolling(window=smooth_window, min_periods=1).mean()
-        plt.plot(group["step"], y, linewidth=1.8, label=f"{label}, lr={lr:g}")
+        plt.plot(group["step"], y, linewidth=1.8, label=rf"{label}, $\eta={latex_float(lr)}$")
 
     ylabel = "Training perplexity" if metric == "ppl" else "Training loss"
     plt.xlabel("Optimizer step")
     plt.ylabel(ylabel)
-    plt.grid(True, alpha=0.25)
+    plt.yscale(yscale)
+    plt.grid(True, which="both", alpha=0.25)
     plt.legend(fontsize=8)
     plt.tight_layout()
     plt.savefig(output_path)
@@ -109,6 +129,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--metric", choices=["loss", "ppl", "both"], default="both")
     parser.add_argument("--max_step", type=int, default=-1)
     parser.add_argument("--smooth_window", type=int, default=1)
+    parser.add_argument("--yscale", choices=["linear", "log"], default="linear")
     parser.add_argument("--formats", default="pdf,png")
     return parser.parse_args()
 
@@ -131,7 +152,7 @@ def main(args) -> None:
         for metric in metrics:
             for fmt in formats:
                 output_path = os.path.join(args.output_dir, f"optimization_curve_{model_name}_{metric}.{fmt}")
-                plot_one(model_df, output_path, metric, args.max_step, args.smooth_window)
+                plot_one(model_df, output_path, metric, args.max_step, args.smooth_window, args.yscale)
                 print("Saved", output_path)
 
 

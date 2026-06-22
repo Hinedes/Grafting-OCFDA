@@ -529,6 +529,8 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
     logging_steps = getattr(args, "logging_steps", None)
     if logging_steps is not None:
         common_kwargs["logging_steps"] = logging_steps
+    if getattr(args, "bf16", False):
+        common_kwargs["bf16"] = True
 
     if adapter_name != "rosa":
         common_kwargs.update(
