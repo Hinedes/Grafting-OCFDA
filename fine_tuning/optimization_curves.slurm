@@ -28,6 +28,8 @@ CALIBRATION_DATA=${CALIBRATION_DATA:-c4}
 NUM_EPOCHS=${NUM_EPOCHS:-3}
 WARMUP_STEPS=${WARMUP_STEPS:-100}
 LOGGING_STEPS=${LOGGING_STEPS:-10}
+VAL_SET_SIZE=${VAL_SET_SIZE:-0}
+EVAL_STEP=${EVAL_STEP:-1000000}
 CURVE_GPUS=${CURVE_GPUS:-0,1,2,3}
 
 source "$VENV/bin/activate"
@@ -108,6 +110,8 @@ for shard_id in "${!GPU_LIST[@]}"; do
     --num_epochs "$NUM_EPOCHS" \
     --warmup_steps "$WARMUP_STEPS" \
     --logging_steps "$LOGGING_STEPS" \
+    --val_set_size "$VAL_SET_SIZE" \
+    --eval_step "$EVAL_STEP" \
     --num_shards "$NUM_SHARDS" \
     --shard_id "$shard_id" \
     "${EXTRA_ARGS[@]}" > "$log" 2>&1 &
