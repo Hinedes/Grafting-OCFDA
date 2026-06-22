@@ -541,7 +541,7 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
     logging_steps = getattr(args, "logging_steps", None)
     if logging_steps is not None:
         common_kwargs["logging_steps"] = logging_steps
-    if getattr(args, "bf16", False):
+    if getattr(args, "bf16", False) or adapter_name == "full":
         common_kwargs["bf16"] = True
 
     if adapter_name != "rosa":
@@ -1484,6 +1484,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--only_missing", action="store_true", default=True)
     parser.add_argument("--rerun_existing", dest="only_missing", action="store_false")
     parser.add_argument("--save_adapters", action="store_true")
+    parser.add_argument("--bf16", action="store_true")
     parser.add_argument("--continue_on_error", action="store_true", default=True)
     parser.add_argument("--stop_on_error", dest="continue_on_error", action="store_false")
     parser.add_argument("--max_runs", type=int, default=None)

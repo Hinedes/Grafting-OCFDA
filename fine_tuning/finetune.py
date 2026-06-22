@@ -239,11 +239,13 @@ def train(
     if len(wandb_log_model) > 0:
         os.environ["WANDB_LOG_MODEL"] = wandb_log_model
 
+    model_dtype = torch.float32 if adapter_name == "sift" else (torch.bfloat16 if bf16 else torch.float16)
+
     if load_8bit:
         model = AutoModelForCausalLM.from_pretrained(
             base_model,
             load_in_8bit=load_8bit,
-            torch_dtype=torch.float16,
+            torch_dtype=model_dtype,
             device_map=device_map,
             trust_remote_code=True,
         )
@@ -251,7 +253,7 @@ def train(
         model = AutoModelForCausalLM.from_pretrained(
             base_model,
             load_in_8bit=False,
-            torch_dtype=torch.float16 if adapter_name != "sift" else torch.float32,
+            torch_dtype=model_dtype,
             device_map={"": int(os.environ.get("LOCAL_RANK", 0))},
             trust_remote_code=True,
             attn_implementation=attn_implementation
@@ -500,7 +502,7 @@ def train(
             num_train_epochs=num_epochs,
             learning_rate=learning_rate,
             seed=seed,
-            fp16=adapter_name != "sift",
+            fp16=adapter_name != "sift" and not bf16,
             bf16=bf16,
             logging_steps=logging_steps,
             evaluation_strategy="steps" if val_set_size > 0 else "no",
