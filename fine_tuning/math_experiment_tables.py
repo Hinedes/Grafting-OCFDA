@@ -346,6 +346,8 @@ def parse_method(method: str) -> Tuple[str, str, float]:
         return "rosa", "none", 0.0
     if method.startswith("sift"):
         return "sift", "random" if "rand" in method else "super", 0.0
+    if method in {"super-delta", "super-full-delta", "super-fft-delta", "super-ft-delta"}:
+        return "super", "full-delta", 0.0
     if method.startswith("super"):
         if "rand" in method:
             return "super", "random", 0.0
@@ -537,11 +539,12 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
             "component_lora_ratio": budget_plan["component_lora_ratio"],
             "target_modules": target_modules,
             "calibration_data": calibration_data if adapter_name != "rosa" else None,
+            "full_ft_checkpoint": args.full_ft_checkpoint if mask_choice == "full-delta" else None,
         }
     logging_steps = getattr(args, "logging_steps", None)
     if logging_steps is not None:
         common_kwargs["logging_steps"] = logging_steps
-    if getattr(args, "bf16", False) or adapter_name == "full":
+    if getattr(args, "bf16", False) or adapter_name == "full" or mask_choice == "full-delta":
         common_kwargs["bf16"] = True
 
     if adapter_name != "rosa":
@@ -549,6 +552,7 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
             calibration_data=calibration_data,
             calibration_nsamples=args.calibration_nsamples,
             calibration_seed=args.calibration_seed,
+            full_ft_checkpoint=args.full_ft_checkpoint,
         )
         if adapter_name in {"super", "supra"}:
             common_kwargs["mask_choice"] = mask_choice
@@ -836,6 +840,7 @@ def build_tables(results: Iterable[dict], datasets: List[str]) -> Tuple[pd.DataF
             calibration_data=row.get("calibration_data"),
             calibration_nsamples=row.get("calibration_nsamples"),
             calibration_seed=row.get("calibration_seed"),
+            full_ft_checkpoint=row.get("full_ft_checkpoint"),
             val_split_seed=row.get("val_split_seed"),
             lr_tuning_ppl=row.get("lr_tuning", {}).get("ppl"),
             lr_tuning_nll=row.get("lr_tuning", {}).get("nll"),
@@ -1046,6 +1051,7 @@ def make_result_row(
         "calibration_data": resolved_calibration_data(args),
         "calibration_nsamples": args.calibration_nsamples,
         "calibration_seed": args.calibration_seed,
+        "full_ft_checkpoint": args.full_ft_checkpoint,
         "val_split_seed": args.val_split_seed,
         "lr_tuning": lr_tuning,
         "checkpoint_dir": checkpoint_dir,
@@ -1266,6 +1272,9 @@ def run(args) -> None:
         raise ValueError("--budget_tolerance_pct must be nonnegative.")
     if not args.eval_all_lrs and args.skip_lr_tuning_metric:
         raise ValueError("--skip_lr_tuning_metric cannot be used with selected-only evaluation.")
+    if any(parse_method(method)[1] == "full-delta" for method in parse_csv_list(args.methods, str)):
+        if not args.full_ft_checkpoint:
+            raise ValueError("--full_ft_checkpoint is required for super-delta/full-delta methods.")
 
     target_modules = LEGACY_TARGET_MODULES if args.legacy_target_modules else parse_csv_list(args.target_modules, str)
     datasets = parse_csv_list(args.datasets, str)
@@ -1283,6 +1292,7 @@ def run(args) -> None:
     print("Wanda calibration data:", resolved_calibration_data(args))
     print("Wanda calibration samples:", args.calibration_nsamples)
     print("Wanda calibration seed:", args.calibration_seed)
+    print("Full-FT checkpoint for delta masks:", args.full_ft_checkpoint or None)
     print("Evaluation datasets:", datasets)
     print("Target modules:", target_modules)
     print("Validation split seed:", args.val_split_seed)
@@ -1437,6 +1447,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--calibration_data", default="same_as_train")
     parser.add_argument("--calibration_nsamples", type=int, default=128)
     parser.add_argument("--calibration_seed", type=int, default=228)
+    parser.add_argument("--full_ft_checkpoint", default="")
     parser.add_argument("--out_dir", default="out_math_experiments")
     parser.add_argument("--checkpoint_dir", default="checkpoints_math")
     parser.add_argument("--batch_size", type=int, default=16)

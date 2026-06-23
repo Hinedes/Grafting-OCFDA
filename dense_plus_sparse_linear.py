@@ -1,6 +1,8 @@
+import json
+import os
+
 import torch
 import torch.nn as nn
-import math
 
 from src.mask import prepare_super_mask
 
@@ -38,7 +40,7 @@ class DensePlusSparseLinear(torch.autograd.Function):
         input, weight, indices, values, bias = ctx.saved_tensors
         grad_input = grad_weight = grad_indices = grad_values = grad_bias = None
 
-        dense_plus_sparse = weight.view(-1).scatter_add(0, indices.to(torch.int64), values)
+        dense_plus_sparse = weight.view(-1).scatter_add(0, indices.to(torch.int64), values.to(weight.dtype))
         dense_plus_sparse = dense_plus_sparse.view_as(weight)
 
         if ctx.needs_input_grad[0]:
@@ -57,7 +59,7 @@ class DensePlusSparseLinear(torch.autograd.Function):
                 grad_weight = grad_matrix
             
             if ctx.needs_input_grad[3]:
-                grad_values = grad_matrix.view(-1).gather(0, indices.to(torch.int64))
+                grad_values = grad_matrix.view(-1).gather(0, indices.to(torch.int64)).to(values.dtype)
 
         if bias is not None and ctx.needs_input_grad[4]:
             grad_bias = grad_output.sum(dim=0)# if input.dim() == 2 else grad_output.sum(dim=(0, 1))
@@ -94,6 +96,101 @@ class SparseDenseLinear(nn.Module):
         return DensePlusSparseLinear.apply(input, self.weight, self.indices, self.values, self.bias)
 
 
+def resolve_safetensors_weight_files(checkpoint_path: str) -> dict:
+    if not checkpoint_path:
+        raise ValueError("full_ft_checkpoint is required for full-delta sparse masks.")
+    if os.path.isfile(checkpoint_path):
+        return {"__single_file__": checkpoint_path}
+    if not os.path.isdir(checkpoint_path):
+        raise FileNotFoundError(f"Full fine-tuned checkpoint not found: {checkpoint_path}")
+
+    single_file = os.path.join(checkpoint_path, "model.safetensors")
+    if os.path.exists(single_file):
+        return {"__single_file__": single_file}
+
+    index_file = os.path.join(checkpoint_path, "model.safetensors.index.json")
+    if os.path.exists(index_file):
+        with open(index_file, "r") as f:
+            index = json.load(f)
+        return {
+            weight_name: os.path.join(checkpoint_path, shard_name)
+            for weight_name, shard_name in index.get("weight_map", {}).items()
+        }
+
+    raise FileNotFoundError(
+        f"Could not find model.safetensors or model.safetensors.index.json in {checkpoint_path}"
+    )
+
+
+def load_safetensors_weight(weight_files: dict, weight_name: str) -> torch.Tensor:
+    from safetensors import safe_open
+
+    if "__single_file__" in weight_files:
+        shard_path = weight_files["__single_file__"]
+    else:
+        shard_path = weight_files.get(weight_name)
+        if shard_path is None:
+            raise KeyError(f"Weight {weight_name} is not present in the full fine-tuned checkpoint index.")
+    with safe_open(shard_path, framework="pt", device="cpu") as f:
+        if weight_name not in f.keys():
+            raise KeyError(f"Weight {weight_name} is not present in {shard_path}.")
+        return f.get_tensor(weight_name)
+
+
+@torch.no_grad()
+def prepare_full_delta_mask(model, target_modules_list, sparse_rate: float, full_ft_checkpoint: str) -> None:
+    weight_files = resolve_safetensors_weight_files(full_ft_checkpoint)
+    prepared_layers = 0
+    total_indices = 0
+
+    for module_name, module in model.named_modules():
+        if not any(module_name.endswith(target_key) for target_key in target_modules_list):
+            continue
+        if not hasattr(module, "weight"):
+            continue
+
+        full_weight_name = f"{module_name}.weight"
+        full_weight = load_safetensors_weight(weight_files, full_weight_name)
+        base_weight = module.weight.detach().cpu()
+        if full_weight.shape != base_weight.shape:
+            raise ValueError(
+                f"Shape mismatch for {full_weight_name}: base={tuple(base_weight.shape)}, "
+                f"full_ft={tuple(full_weight.shape)}"
+            )
+
+        train_num = min(int(sparse_rate * module.weight.numel()) + 1, module.weight.numel())
+        delta_metric = (full_weight.float() - base_weight.float()).abs().view(-1)
+        indices = torch.topk(delta_metric, k=train_num, largest=True).indices.to(dtype=torch.int32)
+        module.weight.full_delta_topk_indices = indices
+        prepared_layers += 1
+        total_indices += int(indices.numel())
+
+        selected = delta_metric[indices.to(torch.int64)]
+        print(
+            "full-delta mask",
+            full_weight_name,
+            "train_num",
+            train_num,
+            "delta_min",
+            float(selected.min().item()) if selected.numel() else 0.0,
+            "delta_mean",
+            float(selected.mean().item()) if selected.numel() else 0.0,
+            "delta_max",
+            float(selected.max().item()) if selected.numel() else 0.0,
+        )
+
+    if prepared_layers == 0:
+        raise RuntimeError("No target modules were found when preparing full-delta masks.")
+    print(
+        "Prepared full-delta sparse masks from",
+        full_ft_checkpoint,
+        "layers:",
+        prepared_layers,
+        "sparse entries:",
+        total_indices,
+    )
+
+
 def get_dense_plus_sparse_model(
         model,
         target_modules_list,
@@ -104,6 +201,7 @@ def get_dense_plus_sparse_model(
         calibration_data="c4",
         calibration_nsamples=128,
         calibration_seed=228,
+        full_ft_checkpoint=None,
 ):
     if indices_choice in {"super", "super-bottom"}:
         assert tokenizer is not None, "`Super` option requires tokenizer to determine outliers indices."
@@ -117,6 +215,13 @@ def get_dense_plus_sparse_model(
             calibration_data=calibration_data,
             metric_order="bottom" if indices_choice == "super-bottom" else "top",
         )
+    elif indices_choice == "full-delta":
+        prepare_full_delta_mask(
+            model=model,
+            target_modules_list=target_modules_list,
+            sparse_rate=sparse_rate,
+            full_ft_checkpoint=full_ft_checkpoint,
+        )
 
     def _get_submodules(key):
         parent = model.get_submodule(".".join(key.split(".")[:-1]))
@@ -124,8 +229,8 @@ def get_dense_plus_sparse_model(
         target = model.get_submodule(key)
         return parent, target, target_name
 
-    if indices_choice not in {"random", "super", "super-bottom"}:
-        raise ValueError("indices_choice must be 'random', 'super', or 'super-bottom'.")
+    if indices_choice not in {"random", "super", "super-bottom", "full-delta"}:
+        raise ValueError("indices_choice must be 'random', 'super', 'super-bottom', or 'full-delta'.")
 
     replaced_modules = 0
     total_indices = 0
@@ -138,6 +243,10 @@ def get_dense_plus_sparse_model(
             indices = getattr(old_module.weight, attr_name, None)
             if indices is None:
                 raise RuntimeError(f"Wanda indices were not prepared for a Super sparse layer ({attr_name}).")
+        elif indices_choice == "full-delta":
+            indices = getattr(old_module.weight, "full_delta_topk_indices", None)
+            if indices is None:
+                raise RuntimeError("Full-delta indices were not prepared for a Super sparse layer.")
         else:
             indices = None
         new_module = SparseDenseLinear(old_module, sparse_rate=sparse_rate, indices=indices)
@@ -155,7 +264,12 @@ def get_dense_plus_sparse_model(
 
     print(
         "Sparse mask source:",
-        {"super": "wanda-top", "super-bottom": "wanda-bottom", "random": "random"}[indices_choice],
+        {
+            "super": "wanda-top",
+            "super-bottom": "wanda-bottom",
+            "random": "random",
+            "full-delta": "full-ft-delta-top",
+        }[indices_choice],
         "replaced modules:",
         replaced_modules,
         "sparse entries:",

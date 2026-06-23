@@ -100,6 +100,7 @@ def train(
         calibration_data: str = "c4",
         calibration_nsamples: int = 128,
         calibration_seed: int = 228,
+        full_ft_checkpoint: str = "",
         # training hyperparams
         batch_size: int = 128,
         micro_batch_size: int = 4,
@@ -163,8 +164,8 @@ def train(
 ):
     if mask_choice is None:
         mask_choice = "random" if random_indices else "super"
-    if mask_choice not in {"random", "super", "super-bottom"}:
-        raise ValueError("mask_choice must be 'random', 'super', or 'super-bottom'.")
+    if mask_choice not in {"random", "super", "super-bottom", "full-delta"}:
+        raise ValueError("mask_choice must be 'random', 'super', 'super-bottom', or 'full-delta'.")
     compile = bool(compile)
     sparse_module = target_modules
     print(
@@ -213,6 +214,7 @@ def train(
         f"calibration_data: {calibration_data}\n"
         f"calibration_nsamples: {calibration_nsamples}\n"
         f"calibration_seed: {calibration_seed}\n"
+        f"full_ft_checkpoint: {full_ft_checkpoint}\n"
         f"seed: {seed}\n"
     )
     assert (
@@ -372,6 +374,7 @@ def train(
             calibration_data=calibration_data,
             calibration_nsamples=calibration_nsamples,
             calibration_seed=calibration_seed,
+            full_ft_checkpoint=full_ft_checkpoint,
         )
         print('\n' * 3)
         print(model)
