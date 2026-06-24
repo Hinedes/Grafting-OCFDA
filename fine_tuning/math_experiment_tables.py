@@ -346,7 +346,16 @@ def parse_method(method: str) -> Tuple[str, str, float]:
         return "rosa", "none", 0.0
     if method.startswith("sift"):
         return "sift", "random" if "rand" in method else "super", 0.0
-    if method in {"super-delta", "super-full-delta", "super-fft-delta", "super-ft-delta"}:
+    if method in {"super-delta-naive", "super-full-delta-naive", "super-fft-delta-naive", "super-ft-delta-naive"}:
+        return "super", "full-delta-naive", 0.0
+    if method in {
+        "super-delta",
+        "super-delta-wanda",
+        "super-wanda-delta",
+        "super-full-delta",
+        "super-fft-delta",
+        "super-ft-delta",
+    }:
         return "super", "full-delta", 0.0
     if method.startswith("super"):
         if "rand" in method:
@@ -539,7 +548,7 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
             "component_lora_ratio": budget_plan["component_lora_ratio"],
             "target_modules": target_modules,
             "calibration_data": calibration_data if adapter_name != "rosa" else None,
-            "full_ft_checkpoint": args.full_ft_checkpoint if mask_choice == "full-delta" else None,
+            "full_ft_checkpoint": args.full_ft_checkpoint if mask_choice.startswith("full-delta") else None,
         }
     logging_steps = getattr(args, "logging_steps", None)
     if logging_steps is not None:
@@ -1272,7 +1281,7 @@ def run(args) -> None:
         raise ValueError("--budget_tolerance_pct must be nonnegative.")
     if not args.eval_all_lrs and args.skip_lr_tuning_metric:
         raise ValueError("--skip_lr_tuning_metric cannot be used with selected-only evaluation.")
-    if any(parse_method(method)[1] == "full-delta" for method in parse_csv_list(args.methods, str)):
+    if any(parse_method(method)[1].startswith("full-delta") for method in parse_csv_list(args.methods, str)):
         if not args.full_ft_checkpoint:
             raise ValueError("--full_ft_checkpoint is required for super-delta/full-delta methods.")
 

@@ -4,7 +4,9 @@ import os
 import torch
 import torch.nn as nn
 
-from src.mask import prepare_super_mask
+from src.datasets_loader import get_loaders
+from src.layerwrapper import WrappedGPT
+from src.mask import find_layers, get_all_blocks, prepare_super_mask
 
 
 def random_sparse_indices(num_elements: int, train_num: int, device) -> torch.Tensor:
@@ -191,6 +193,177 @@ def prepare_full_delta_mask(model, target_modules_list, sparse_rate: float, full
     )
 
 
+@torch.no_grad()
+def prepare_full_delta_wanda_mask(
+        model,
+        tokenizer,
+        target_modules_list,
+        sparse_rate: float,
+        full_ft_checkpoint: str,
+        calibration_data: str,
+        calibration_nsamples: int,
+        calibration_seed: int,
+) -> None:
+    if tokenizer is None:
+        raise ValueError("full-delta Wanda masks require tokenizer for calibration activations.")
+
+    weight_files = resolve_safetensors_weight_files(full_ft_checkpoint)
+    dataloader, _ = get_loaders(
+        calibration_data,
+        calibration_nsamples,
+        seed=calibration_seed,
+        seqlen=model.seqlen,
+        tokenizer=tokenizer,
+    )
+
+    use_cache = model.config.use_cache
+    model.config.use_cache = False
+
+    blocks = get_all_blocks(model)
+    dev = model.device
+    dtype = next(iter(model.parameters())).dtype
+    inps = torch.zeros(
+        (calibration_nsamples, min(2048, model.seqlen), model.config.hidden_size),
+        dtype=dtype,
+        device=dev,
+    )
+    cache = {'i': 0, 'attention_mask': None, "position_ids": None, 'position_embeddings': None}
+
+    class Catcher(nn.Module):
+        def __init__(self, module):
+            super().__init__()
+            self.module = module
+
+        def forward(self, inp, **kwargs):
+            inps[cache['i']] = inp
+            cache['i'] += 1
+            cache['attention_mask'] = kwargs.get('attention_mask')
+            if 'position_embeddings' in kwargs:
+                cache['position_embeddings'] = kwargs['position_embeddings']
+            if 'position_ids' in kwargs:
+                cache['position_ids'] = kwargs['position_ids']
+            raise ValueError
+
+    blocks[0] = Catcher(blocks[0])
+    for batch in dataloader:
+        try:
+            model(batch[0].to(dev))
+        except ValueError:
+            pass
+    blocks[0] = blocks[0].module
+
+    actual_nsamples = int(cache["i"])
+    if actual_nsamples == 0:
+        model.config.use_cache = use_cache
+        raise RuntimeError("No calibration samples were collected for full-delta Wanda masks.")
+
+    outs = torch.zeros_like(inps)
+    attention_mask = cache['attention_mask']
+    position_ids = cache['position_ids']
+    position_embeddings = cache['position_embeddings']
+
+    block_args = {}
+    if attention_mask is not None:
+        block_args["attention_mask"] = attention_mask
+    if position_ids is not None:
+        block_args["position_ids"] = position_ids
+    if position_embeddings is not None:
+        block_args["position_embeddings"] = position_embeddings
+
+    module_names = {id(module): name for name, module in model.named_modules()}
+    prepared_layers = 0
+    total_indices = 0
+
+    for i, block in enumerate(blocks):
+        subset = {
+            name: layer
+            for name, layer in find_layers(block).items()
+            if any(module_names.get(id(layer), "").endswith(target_key) for target_key in target_modules_list)
+        }
+
+        wrappers = {name: WrappedGPT(layer) for name, layer in subset.items()}
+
+        def add_batch(_name):
+            def tmp(_, inp, out):
+                wrappers[_name].add_batch(inp[0].data, out.data)
+            return tmp
+
+        handles = []
+        for name in wrappers:
+            handles.append(subset[name].register_forward_hook(add_batch(name)))
+
+        for j in range(actual_nsamples):
+            outs[j] = block(inps[j].to(dev).unsqueeze(0), **block_args)[0]
+
+        for h in handles:
+            h.remove()
+
+        for name, layer in subset.items():
+            full_weight_name = f"{module_names[id(layer)]}.weight"
+            full_weight = load_safetensors_weight(weight_files, full_weight_name).to(
+                device=layer.weight.device,
+                dtype=torch.float32,
+            )
+            base_weight = layer.weight.detach().to(dtype=torch.float32)
+            if full_weight.shape != base_weight.shape:
+                raise ValueError(
+                    f"Shape mismatch for {full_weight_name}: base={tuple(base_weight.shape)}, "
+                    f"full_ft={tuple(full_weight.shape)}"
+                )
+
+            train_num = min(int(sparse_rate * layer.weight.numel()) + 1, layer.weight.numel())
+            delta_metric = (full_weight - base_weight).abs()
+            activation_scale = torch.sqrt(wrappers[name].scaler_row.reshape((1, -1))).to(dtype=torch.float32)
+            wanda_delta_metric = (delta_metric * activation_scale).view(-1)
+            selected_indices = torch.topk(wanda_delta_metric, k=train_num, largest=True).indices
+            layer.weight.full_delta_topk_indices = selected_indices.cpu().to(dtype=torch.int32)
+            prepared_layers += 1
+            total_indices += int(selected_indices.numel())
+
+            selected_metric = wanda_delta_metric[selected_indices]
+            selected_delta = delta_metric.view(-1)[selected_indices]
+            print(
+                "full-delta-wanda mask",
+                full_weight_name,
+                "train_num",
+                train_num,
+                "delta_min",
+                float(selected_delta.min().item()) if selected_delta.numel() else 0.0,
+                "delta_mean",
+                float(selected_delta.mean().item()) if selected_delta.numel() else 0.0,
+                "delta_max",
+                float(selected_delta.max().item()) if selected_delta.numel() else 0.0,
+                "score_min",
+                float(selected_metric.min().item()) if selected_metric.numel() else 0.0,
+                "score_mean",
+                float(selected_metric.mean().item()) if selected_metric.numel() else 0.0,
+                "score_max",
+                float(selected_metric.max().item()) if selected_metric.numel() else 0.0,
+            )
+
+        blocks[i] = block
+        torch.cuda.empty_cache()
+        inps, outs = outs, inps
+
+    model.config.use_cache = use_cache
+    torch.cuda.empty_cache()
+
+    if prepared_layers == 0:
+        raise RuntimeError("No target modules were found when preparing full-delta Wanda masks.")
+    print(
+        "Prepared full-delta Wanda sparse masks from",
+        full_ft_checkpoint,
+        "calibration_data:",
+        calibration_data,
+        "calibration_samples:",
+        actual_nsamples,
+        "layers:",
+        prepared_layers,
+        "sparse entries:",
+        total_indices,
+    )
+
+
 def get_dense_plus_sparse_model(
         model,
         target_modules_list,
@@ -215,12 +388,23 @@ def get_dense_plus_sparse_model(
             calibration_data=calibration_data,
             metric_order="bottom" if indices_choice == "super-bottom" else "top",
         )
-    elif indices_choice == "full-delta":
+    elif indices_choice == "full-delta-naive":
         prepare_full_delta_mask(
             model=model,
             target_modules_list=target_modules_list,
             sparse_rate=sparse_rate,
             full_ft_checkpoint=full_ft_checkpoint,
+        )
+    elif indices_choice == "full-delta":
+        prepare_full_delta_wanda_mask(
+            model=model,
+            tokenizer=tokenizer,
+            target_modules_list=target_modules_list,
+            sparse_rate=sparse_rate,
+            full_ft_checkpoint=full_ft_checkpoint,
+            calibration_data=calibration_data,
+            calibration_nsamples=calibration_nsamples,
+            calibration_seed=calibration_seed,
         )
 
     def _get_submodules(key):
@@ -229,8 +413,11 @@ def get_dense_plus_sparse_model(
         target = model.get_submodule(key)
         return parent, target, target_name
 
-    if indices_choice not in {"random", "super", "super-bottom", "full-delta"}:
-        raise ValueError("indices_choice must be 'random', 'super', 'super-bottom', or 'full-delta'.")
+    if indices_choice not in {"random", "super", "super-bottom", "full-delta", "full-delta-naive"}:
+        raise ValueError(
+            "indices_choice must be 'random', 'super', 'super-bottom', 'full-delta', "
+            "or 'full-delta-naive'."
+        )
 
     replaced_modules = 0
     total_indices = 0
@@ -243,7 +430,7 @@ def get_dense_plus_sparse_model(
             indices = getattr(old_module.weight, attr_name, None)
             if indices is None:
                 raise RuntimeError(f"Wanda indices were not prepared for a Super sparse layer ({attr_name}).")
-        elif indices_choice == "full-delta":
+        elif indices_choice in {"full-delta", "full-delta-naive"}:
             indices = getattr(old_module.weight, "full_delta_topk_indices", None)
             if indices is None:
                 raise RuntimeError("Full-delta indices were not prepared for a Super sparse layer.")
@@ -268,7 +455,8 @@ def get_dense_plus_sparse_model(
             "super": "wanda-top",
             "super-bottom": "wanda-bottom",
             "random": "random",
-            "full-delta": "full-ft-delta-top",
+            "full-delta": "full-ft-delta-wanda-top",
+            "full-delta-naive": "full-ft-delta-naive-top",
         }[indices_choice],
         "replaced modules:",
         replaced_modules,
