@@ -164,10 +164,13 @@ def train(
 ):
     if mask_choice is None:
         mask_choice = "random" if random_indices else "super"
-    if mask_choice not in {"random", "super", "super-bottom", "full-delta", "full-delta-naive"}:
+    if not (
+        mask_choice in {"random", "super", "super-bottom", "full-delta", "full-delta-naive"}
+        or mask_choice.startswith("super-hybrid-")
+    ):
         raise ValueError(
-            "mask_choice must be 'random', 'super', 'super-bottom', 'full-delta', "
-            "or 'full-delta-naive'."
+            "mask_choice must be 'random', 'super', 'super-bottom', 'super-hybrid-<beta>', "
+            "'full-delta', or 'full-delta-naive'."
         )
     compile = bool(compile)
     sparse_module = target_modules

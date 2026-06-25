@@ -25,6 +25,16 @@ def random_sparse_indices(num_elements: int, train_num: int, device) -> torch.Te
     return selected[:train_num].to(dtype=torch.int32)
 
 
+def parse_super_hybrid_beta(indices_choice: str) -> float:
+    prefix = "super-hybrid-"
+    if not indices_choice.startswith(prefix):
+        raise ValueError(f"Expected hybrid mask choice to start with {prefix!r}: {indices_choice}")
+    beta = float(indices_choice[len(prefix):])
+    if not 0.0 <= beta <= 1.0:
+        raise ValueError("Super hybrid beta must be in [0, 1].")
+    return beta
+
+
 class DensePlusSparseLinear(torch.autograd.Function):
     @staticmethod
     @torch.amp.custom_fwd(device_type="cuda")
@@ -376,8 +386,13 @@ def get_dense_plus_sparse_model(
         calibration_seed=228,
         full_ft_checkpoint=None,
 ):
-    if indices_choice in {"super", "super-bottom"}:
+    if indices_choice in {"super", "super-bottom"} or indices_choice.startswith("super-hybrid-"):
         assert tokenizer is not None, "`Super` option requires tokenizer to determine outliers indices."
+        hybrid_beta = (
+            parse_super_hybrid_beta(indices_choice)
+            if indices_choice.startswith("super-hybrid-")
+            else None
+        )
         prepare_super_mask(
             model,
             tokenizer,
@@ -386,7 +401,8 @@ def get_dense_plus_sparse_model(
             nsamples=calibration_nsamples,
             seed=calibration_seed,
             calibration_data=calibration_data,
-            metric_order="bottom" if indices_choice == "super-bottom" else "top",
+            metric_order="hybrid" if hybrid_beta is not None else ("bottom" if indices_choice == "super-bottom" else "top"),
+            hybrid_top_ratio=hybrid_beta,
         )
     elif indices_choice == "full-delta-naive":
         prepare_full_delta_mask(
@@ -413,10 +429,13 @@ def get_dense_plus_sparse_model(
         target = model.get_submodule(key)
         return parent, target, target_name
 
-    if indices_choice not in {"random", "super", "super-bottom", "full-delta", "full-delta-naive"}:
+    if not (
+        indices_choice in {"random", "super", "super-bottom", "full-delta", "full-delta-naive"}
+        or indices_choice.startswith("super-hybrid-")
+    ):
         raise ValueError(
-            "indices_choice must be 'random', 'super', 'super-bottom', 'full-delta', "
-            "or 'full-delta-naive'."
+            "indices_choice must be 'random', 'super', 'super-bottom', 'super-hybrid-<beta>', "
+            "'full-delta', or 'full-delta-naive'."
         )
 
     replaced_modules = 0
@@ -425,8 +444,11 @@ def get_dense_plus_sparse_model(
 
     def _replace_module(parent_module, child_name, old_module):
         nonlocal replaced_modules, total_indices, total_unique_indices
-        if indices_choice in {"super", "super-bottom"}:
-            attr_name = "wanda_bottomk_indices" if indices_choice == "super-bottom" else "wanda_topk_indices"
+        if indices_choice in {"super", "super-bottom"} or indices_choice.startswith("super-hybrid-"):
+            if indices_choice.startswith("super-hybrid-"):
+                attr_name = "wanda_hybrid_indices"
+            else:
+                attr_name = "wanda_bottomk_indices" if indices_choice == "super-bottom" else "wanda_topk_indices"
             indices = getattr(old_module.weight, attr_name, None)
             if indices is None:
                 raise RuntimeError(f"Wanda indices were not prepared for a Super sparse layer ({attr_name}).")
@@ -451,13 +473,17 @@ def get_dense_plus_sparse_model(
 
     print(
         "Sparse mask source:",
-        {
+        (
+            f"wanda-hybrid-beta-{parse_super_hybrid_beta(indices_choice):g}"
+            if indices_choice.startswith("super-hybrid-")
+            else {
             "super": "wanda-top",
             "super-bottom": "wanda-bottom",
             "random": "random",
             "full-delta": "full-ft-delta-wanda-top",
             "full-delta-naive": "full-ft-delta-naive-top",
-        }[indices_choice],
+            }[indices_choice]
+        ),
         "replaced modules:",
         replaced_modules,
         "sparse entries:",

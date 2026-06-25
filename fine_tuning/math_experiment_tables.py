@@ -357,6 +357,16 @@ def parse_method(method: str) -> Tuple[str, str, float]:
         "super-ft-delta",
     }:
         return "super", "full-delta", 0.0
+    if method.startswith("super-wanda-hybrid-") or method.startswith("super-hybrid-"):
+        beta_text = (
+            method.removeprefix("super-wanda-hybrid-")
+            if method.startswith("super-wanda-hybrid-")
+            else method.removeprefix("super-hybrid-")
+        )
+        beta = float(beta_text)
+        if not 0.0 <= beta <= 1.0:
+            raise ValueError("Super Wanda hybrid beta must be in [0, 1].")
+        return "super", f"super-hybrid-{beta:g}", 0.0
     if method.startswith("super"):
         if "rand" in method:
             return "super", "random", 0.0

@@ -62,9 +62,15 @@ def prepare_super_mask(
         collect_stats=False,
         max_layers=None,
         metric_order="top",
+        hybrid_top_ratio=None,
 ):
-    if metric_order not in {"top", "bottom"}:
-        raise ValueError("metric_order must be either 'top' or 'bottom'.")
+    if metric_order not in {"top", "bottom", "hybrid"}:
+        raise ValueError("metric_order must be 'top', 'bottom', or 'hybrid'.")
+    if metric_order == "hybrid":
+        if hybrid_top_ratio is None:
+            raise ValueError("hybrid_top_ratio is required when metric_order='hybrid'.")
+        if not 0.0 <= hybrid_top_ratio <= 1.0:
+            raise ValueError("hybrid_top_ratio must be in [0, 1].")
     if sparse_rate is None:
         sparse_rate = outliers_ratio
     if sparse_rate is None:
@@ -77,6 +83,7 @@ def prepare_super_mask(
         "seed": seed,
         "sparse_rate": float(sparse_rate),
         "metric_order": metric_order,
+        "hybrid_top_ratio": None if hybrid_top_ratio is None else float(hybrid_top_ratio),
         "layers": [],
     } if collect_stats else None
 
@@ -178,17 +185,31 @@ def prepare_super_mask(
             #train_num = (out_features + in_features) * r
             train_num = min(int(sparse_rate * subset[name].weight.numel()) + 1, subset[name].weight.numel())
 
-            selected_indices = torch.topk(
-                flat_tensor,
-                k=train_num,
-                largest=(metric_order == "top"),
-            ).indices
+            if metric_order == "hybrid":
+                top_train_num = min(train_num, int(round(train_num * hybrid_top_ratio)))
+                bottom_train_num = train_num - top_train_num
+                selected_parts = []
+                if top_train_num > 0:
+                    selected_parts.append(torch.topk(flat_tensor, k=top_train_num, largest=True).indices)
+                if bottom_train_num > 0:
+                    selected_parts.append(torch.topk(flat_tensor, k=bottom_train_num, largest=False).indices)
+                selected_indices = torch.cat(selected_parts)
+            else:
+                top_train_num = train_num if metric_order == "top" else 0
+                bottom_train_num = train_num if metric_order == "bottom" else 0
+                selected_indices = torch.topk(
+                    flat_tensor,
+                    k=train_num,
+                    largest=(metric_order == "top"),
+                ).indices
             selected_indices_cpu = selected_indices.cpu()
             subset[name].weight.wanda_selected_indices = selected_indices_cpu
             if metric_order == "top":
                 subset[name].weight.wanda_topk_indices = selected_indices_cpu
-            else:
+            elif metric_order == "bottom":
                 subset[name].weight.wanda_bottomk_indices = selected_indices_cpu
+            else:
+                subset[name].weight.wanda_hybrid_indices = selected_indices_cpu
 
             if stats is not None:
                 scaler = wrappers[name].scaler_row.detach()
@@ -198,8 +219,11 @@ def prepare_super_mask(
                         "layer": int(i),
                         "name": name,
                         "metric_order": metric_order,
+                        "hybrid_top_ratio": None if hybrid_top_ratio is None else float(hybrid_top_ratio),
                         "weight_shape": [int(dim) for dim in subset[name].weight.shape],
                         "train_num": int(train_num),
+                        "top_train_num": int(top_train_num),
+                        "bottom_train_num": int(bottom_train_num),
                         "numel": int(subset[name].weight.numel()),
                         "scaler_finite": bool(torch.isfinite(scaler).all().item()),
                         "scaler_nan_count": int(torch.isnan(scaler).sum().item()),
