@@ -591,17 +591,18 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
         )
         if adapter_name in {"super", "supra"}:
             common_kwargs["mask_choice"] = mask_choice
+    else:
+        common_kwargs.update(
+            rosa_schedule=args.rosa_schedule,
+            rosa_spa_num_grads=args.rosa_spa_num_grads,
+            rosa_dtype=args.rosa_dtype,
+        )
 
     if args.dry_run:
         print("DRY RUN:", json.dumps({**common_kwargs, "target_modules": target_modules}, indent=2, default=str))
         return None, None, output_dir
 
     if adapter_name == "rosa":
-        common_kwargs.update(
-            rosa_schedule=args.rosa_schedule,
-            rosa_spa_num_grads=args.rosa_spa_num_grads,
-            rosa_dtype=args.rosa_dtype,
-        )
         train_rosa = import_rosa_train()
         model, tokenizer = train_rosa(**common_kwargs)
     else:
