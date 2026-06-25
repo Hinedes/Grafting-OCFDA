@@ -110,6 +110,7 @@ def train(
         weight_decay: float = 0.0,
         cutoff_len: int = 256,
         val_set_size: int = 2000,
+        bf16: bool = False,
         use_gradient_checkpointing: bool = False,
         load_from_checkpoints: bool = False,
         eval_step: int = 50,
@@ -179,6 +180,7 @@ def train(
         f"cutoff_len: {cutoff_len}\n"
         f"val_set_size: {val_set_size}\n"
         f"val_split_seed: {val_split_seed}\n"
+        f"bf16: {bf16}\n"
         f"use_gradient_checkpointing: {use_gradient_checkpointing}\n"
         f"lora_r: {lora_r}\n"
         f"lora_alpha: {lora_alpha}\n"
@@ -237,11 +239,14 @@ def train(
     if len(wandb_log_model) > 0:
         os.environ["WANDB_LOG_MODEL"] = wandb_log_model
 
+    use_bf16_training = bool(bf16 or rosa_dtype == "bf16")
+    model_dtype = torch.bfloat16 if use_bf16_training else torch.float16
+
     if load_8bit:
         model = AutoModelForCausalLM.from_pretrained(
             base_model,
             load_in_8bit=load_8bit,
-            torch_dtype=torch.float16,
+            torch_dtype=model_dtype,
             device_map=device_map,
             trust_remote_code=True,
         )
@@ -249,7 +254,7 @@ def train(
         model = AutoModelForCausalLM.from_pretrained(
             base_model,
             load_in_8bit=False,
-            torch_dtype=torch.float16 if adapter_name != "sift" else torch.float32,
+            torch_dtype=model_dtype if adapter_name != "sift" else torch.float32,
             device_map={"": int(os.environ.get("LOCAL_RANK", 0))},
             trust_remote_code=True,
             attn_implementation=attn_implementation
@@ -417,7 +422,8 @@ def train(
             num_train_epochs=num_epochs,
             learning_rate=learning_rate,
             seed=seed,
-            fp16=True,
+            fp16=not use_bf16_training,
+            bf16=use_bf16_training,
             logging_steps=logging_steps,
             evaluation_strategy="steps" if val_set_size > 0 else "no",
             save_strategy="steps" if save_model else "no",

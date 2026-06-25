@@ -597,6 +597,8 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
             rosa_spa_num_grads=args.rosa_spa_num_grads,
             rosa_dtype=args.rosa_dtype,
         )
+        if args.rosa_dtype == "bf16":
+            common_kwargs["bf16"] = True
 
     if args.dry_run:
         print("DRY RUN:", json.dumps({**common_kwargs, "target_modules": target_modules}, indent=2, default=str))
