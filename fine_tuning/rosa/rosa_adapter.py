@@ -1,7 +1,7 @@
 # rosa_adapter.py  (put it anywhere on your PYTHONPATH)
 
 from types import MethodType
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import torch
 import torch.nn as nn
@@ -15,11 +15,45 @@ except ImportError:
     from rosa.config import RosaConfig
 
 
+def _find_mask(masks: Dict[str, torch.Tensor], target_key: str) -> Optional[torch.Tensor]:
+    for key, mask in masks.items():
+        if target_key in key or key in target_key:
+            return mask
+    return None
+
+
 def _set_spa_masks(self, masks: Dict[str, torch.Tensor]):
+    missing = []
     for name, module in self.named_modules():
-        if isinstance(module, RosaLayer) and name in masks:
-            module.set_spa_mask(masks[name])
+        if not isinstance(module, RosaLayer):
+            continue
+        mask = _find_mask(masks, name)
+        if mask is None:
+            missing.append(name)
+            continue
+        module.set_spa_mask(mask)
+    if missing:
+        raise KeyError(f"Missing RoSA sparse masks for {len(missing)} layers, first missing layer: {missing[0]}")
+    print("spa masks set.")
     self.spa_activated = True
+
+
+def _merge_and_unload(self, progressbar: bool = False, safe_merge: bool = False, adapter_names=None):
+    del progressbar
+    rosa_module_names = [
+        name
+        for name, module in self.named_modules()
+        if name and isinstance(module, RosaLayer)
+    ]
+    for name in rosa_module_names:
+        module = self.get_submodule(name)
+        module.merge(safe_merge=safe_merge, adapter_names=adapter_names)
+        base_layer = module.get_base_layer()
+        pieces = name.split(".")
+        parent_name = ".".join(pieces[:-1])
+        parent = self.get_submodule(parent_name) if parent_name else self
+        setattr(parent, pieces[-1], base_layer)
+    return self
 
 
 def get_rosa_model(
@@ -30,8 +64,9 @@ def get_rosa_model(
     alpha: int = 16,
     dropout: float = 0.05,
     impl: str = "sp_add",
-    schedule: str = "wl0",
+    schedule: str = "wl64",
     spa_num_grads: int = 1,
+    rosa_dtype: str = "bf16",
 ):
     """
     Recursively replaces every linear layer whose name ends with one of
@@ -44,7 +79,7 @@ def get_rosa_model(
         lora_dropout=dropout,
         impl=impl,
         target_modules=target_modules,
-        rosa_dtype='fp32',
+        rosa_dtype=rosa_dtype,
         schedule=schedule,
         spa_num_grads=spa_num_grads,
     )
@@ -79,6 +114,7 @@ def get_rosa_model(
     model.peft_config = {"default": cfg}
     model.spa_activated = False
     model.set_spa_masks = MethodType(_set_spa_masks, model)
+    model.merge_and_unload = MethodType(_merge_and_unload, model)
 
     return model
 

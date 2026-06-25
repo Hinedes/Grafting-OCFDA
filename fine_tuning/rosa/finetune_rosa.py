@@ -123,6 +123,9 @@ def train(
         lora_params_ratio: float = 0.5,
         lora_alpha: int = 16,
         lora_dropout: float = 0.05,
+        rosa_schedule: str = "wl64",
+        rosa_spa_num_grads: int = 1,
+        rosa_dtype: str = "bf16",
         lora_target_modules: List[str] = None,
         # bottleneck adapter hyperparams
         bottleneck_size: int = 256,
@@ -180,6 +183,9 @@ def train(
         f"lora_r: {lora_r}\n"
         f"lora_alpha: {lora_alpha}\n"
         f"lora_dropout: {lora_dropout}\n"
+        f"rosa_schedule: {rosa_schedule}\n"
+        f"rosa_spa_num_grads: {rosa_spa_num_grads}\n"
+        f"rosa_dtype: {rosa_dtype}\n"
         f"lora_target_modules: {lora_target_modules}\n"
         f"optimizer_name: {optimizer_name}\n"
         f"bottleneck_size: {bottleneck_size}\n"
@@ -320,6 +326,9 @@ def train(
             alpha=lora_alpha,
             dropout=lora_dropout,
             impl="sp_add",
+            schedule=rosa_schedule,
+            spa_num_grads=rosa_spa_num_grads,
+            rosa_dtype=rosa_dtype,
         )
         print('\n' * 3)
         print(model)

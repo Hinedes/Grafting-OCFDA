@@ -487,6 +487,22 @@ def collect_trainable_param_report(model, budget_plan: dict) -> dict:
     }
 
 
+def merge_adapter_for_evaluation(model, adapter_name: str) -> Tuple[object, bool]:
+    if adapter_name != "rosa":
+        return model, False
+    merge_and_unload = getattr(model, "merge_and_unload", None)
+    if not callable(merge_and_unload):
+        print("RoSA merge_and_unload is unavailable; evaluating with live adapter layers.")
+        model.eval()
+        return model, False
+    print("Merging RoSA adapters into base weights for evaluation.")
+    merged_model = merge_and_unload(progressbar=False)
+    merged_model.eval()
+    if hasattr(merged_model, "config"):
+        merged_model.config.use_cache = True
+    return merged_model, True
+
+
 def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[str]):
     adapter_name, mask_choice, lora_params_ratio = parse_method(spec.method)
     random_indices = mask_choice == "random"
@@ -581,6 +597,11 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
         return None, None, output_dir
 
     if adapter_name == "rosa":
+        common_kwargs.update(
+            rosa_schedule=args.rosa_schedule,
+            rosa_spa_num_grads=args.rosa_spa_num_grads,
+            rosa_dtype=args.rosa_dtype,
+        )
         train_rosa = import_rosa_train()
         model, tokenizer = train_rosa(**common_kwargs)
     else:
@@ -1148,6 +1169,8 @@ def run_spec_once(
             save_full_model_checkpoint(model, tokenizer, checkpoint_dir)
             full_model_checkpoint_saved = True
 
+        model, adapter_merged_for_eval = merge_adapter_for_evaluation(model, adapter_name)
+
         lr_tuning = {}
         if lr_tuning_records is not None:
             tune_ppl, tune_nll, tune_count = evaluate_perplexity_on_records(
@@ -1172,6 +1195,8 @@ def run_spec_once(
         )
         if full_model_checkpoint_saved:
             row["full_model_checkpoint_saved"] = True
+        if adapter_merged_for_eval:
+            row["adapter_merged_for_eval"] = True
 
         if full_eval:
             accuracy: Dict[str, float] = {}
@@ -1503,6 +1528,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--sparse_rate_override", type=float, default=None)
     parser.add_argument("--rosa_lora_budget_ratio", type=float, default=0.5)
+    parser.add_argument("--rosa_schedule", default="wl64")
+    parser.add_argument("--rosa_spa_num_grads", type=int, default=1)
+    parser.add_argument("--rosa_dtype", default="bf16")
     parser.add_argument("--budget_tolerance_pct", type=float, default=3.0)
     parser.add_argument("--wandb_project", default=os.environ.get("WANDB_PROJECT", ""))
     parser.add_argument("--wandb_entity", default=os.environ.get("WANDB_ENTITY", ""))
