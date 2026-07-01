@@ -97,10 +97,13 @@ class SparseDenseLinear(nn.Module):
 
         if indices is None:
             indices = random_sparse_indices(self.num_elements, super_params, self.weight.device)
-        indices = indices.to(dtype=torch.int32, device=self.weight.device)[:super_params]
+            train_num = super_params
+        else:
+            indices = indices.to(dtype=torch.int32, device=self.weight.device)[:super_params]
+            train_num = int(indices.numel())
         
         self.values = nn.Parameter(
-            torch.zeros(super_params, dtype=torch.float32, device=self.weight.device)
+            torch.zeros(train_num, dtype=torch.float32, device=self.weight.device)
         )
         self.register_buffer('indices', indices)
         
@@ -386,7 +389,7 @@ def get_dense_plus_sparse_model(
         calibration_seed=228,
         full_ft_checkpoint=None,
 ):
-    if indices_choice in {"super", "super-bottom"} or indices_choice.startswith("super-hybrid-"):
+    if indices_choice in {"super", "super-bottom", "super-bottom-structured"} or indices_choice.startswith("super-hybrid-"):
         assert tokenizer is not None, "`Super` option requires tokenizer to determine outliers indices."
         hybrid_beta = (
             parse_super_hybrid_beta(indices_choice)
@@ -401,7 +404,11 @@ def get_dense_plus_sparse_model(
             nsamples=calibration_nsamples,
             seed=calibration_seed,
             calibration_data=calibration_data,
-            metric_order="hybrid" if hybrid_beta is not None else ("bottom" if indices_choice == "super-bottom" else "top"),
+            metric_order=(
+                "hybrid"
+                if hybrid_beta is not None
+                else ("bottom-structured" if indices_choice == "super-bottom-structured" else ("bottom" if indices_choice == "super-bottom" else "top"))
+            ),
             hybrid_top_ratio=hybrid_beta,
         )
     elif indices_choice == "full-delta-naive":
@@ -430,11 +437,11 @@ def get_dense_plus_sparse_model(
         return parent, target, target_name
 
     if not (
-        indices_choice in {"random", "super", "super-bottom", "full-delta", "full-delta-naive"}
+        indices_choice in {"random", "super", "super-bottom", "super-bottom-structured", "full-delta", "full-delta-naive"}
         or indices_choice.startswith("super-hybrid-")
     ):
         raise ValueError(
-            "indices_choice must be 'random', 'super', 'super-bottom', 'super-hybrid-<beta>', "
+            "indices_choice must be 'random', 'super', 'super-bottom', 'super-bottom-structured', 'super-hybrid-<beta>', "
             "'full-delta', or 'full-delta-naive'."
         )
 
@@ -444,11 +451,15 @@ def get_dense_plus_sparse_model(
 
     def _replace_module(parent_module, child_name, old_module):
         nonlocal replaced_modules, total_indices, total_unique_indices
-        if indices_choice in {"super", "super-bottom"} or indices_choice.startswith("super-hybrid-"):
+        if indices_choice in {"super", "super-bottom", "super-bottom-structured"} or indices_choice.startswith("super-hybrid-"):
             if indices_choice.startswith("super-hybrid-"):
                 attr_name = "wanda_hybrid_indices"
             else:
-                attr_name = "wanda_bottomk_indices" if indices_choice == "super-bottom" else "wanda_topk_indices"
+                attr_name = {
+                    "super": "wanda_topk_indices",
+                    "super-bottom": "wanda_bottomk_indices",
+                    "super-bottom-structured": "wanda_bottom_structured_indices",
+                }[indices_choice]
             indices = getattr(old_module.weight, attr_name, None)
             if indices is None:
                 raise RuntimeError(f"Wanda indices were not prepared for a Super sparse layer ({attr_name}).")
@@ -479,6 +490,7 @@ def get_dense_plus_sparse_model(
             else {
             "super": "wanda-top",
             "super-bottom": "wanda-bottom",
+            "super-bottom-structured": "wanda-bottom-structured-rowwise",
             "random": "random",
             "full-delta": "full-ft-delta-wanda-top",
             "full-delta-naive": "full-ft-delta-naive-top",

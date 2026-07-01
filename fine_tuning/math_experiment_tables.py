@@ -367,6 +367,8 @@ def parse_method(method: str) -> Tuple[str, str, float]:
         if not 0.0 <= beta <= 1.0:
             raise ValueError("Super Wanda hybrid beta must be in [0, 1].")
         return "super", f"super-hybrid-{beta:g}", 0.0
+    if method in {"super-bottom-structured", "super-wanda-bottom-structured", "super-row-bottom"}:
+        return "super", "super-bottom-structured", 0.0
     if method.startswith("super"):
         if "rand" in method:
             return "super", "random", 0.0
@@ -395,7 +397,7 @@ def build_budget_plan(args, spec: RunSpec, target_modules: List[str]) -> dict:
     if total_sparse_rate is None:
         total_sparse_rate = reference_lora_params / target_dense_params
 
-    adapter_name, _, lora_params_ratio = parse_method(spec.method)
+    adapter_name, mask_choice, lora_params_ratio = parse_method(spec.method)
     train_sparse_rate = total_sparse_rate
     train_lora_r = spec.lora_r
     component_lora_ratio = None
@@ -412,7 +414,11 @@ def build_budget_plan(args, spec: RunSpec, target_modules: List[str]) -> dict:
         train_sparse_rate = 0.0
         adapter_params = reference_lora_params
     elif adapter_name in {"super", "sift"}:
-        adapter_params = sparse_param_count(shapes, total_sparse_rate, add_one=True)
+        adapter_params = sparse_param_count(
+            shapes,
+            total_sparse_rate,
+            add_one=(adapter_name != "super" or mask_choice != "super-bottom-structured"),
+        )
     elif adapter_name == "supra":
         component_lora_ratio = lora_params_ratio
         adapter_params = supra_param_count(shapes, total_sparse_rate, lora_params_ratio)

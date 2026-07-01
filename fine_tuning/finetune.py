@@ -165,11 +165,11 @@ def train(
     if mask_choice is None:
         mask_choice = "random" if random_indices else "super"
     if not (
-        mask_choice in {"random", "super", "super-bottom", "full-delta", "full-delta-naive"}
+        mask_choice in {"random", "super", "super-bottom", "super-bottom-structured", "full-delta", "full-delta-naive"}
         or mask_choice.startswith("super-hybrid-")
     ):
         raise ValueError(
-            "mask_choice must be 'random', 'super', 'super-bottom', 'super-hybrid-<beta>', "
+            "mask_choice must be 'random', 'super', 'super-bottom', 'super-bottom-structured', 'super-hybrid-<beta>', "
             "'full-delta', or 'full-delta-naive'."
         )
     compile = bool(compile)

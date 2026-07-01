@@ -18,6 +18,32 @@ def tensor_mask_of_largest_elements(tensor: torch.tensor, k: int) -> torch.tenso
     return mask
 
 
+def select_rowwise_bottom_then_global_fill(metric: torch.Tensor, sparse_rate: float) -> torch.Tensor:
+    rows, cols = metric.shape
+    target_num = min(int(sparse_rate * rows * cols), metric.numel())
+    if target_num <= 0:
+        return torch.empty(0, dtype=torch.long, device=metric.device)
+
+    row_train_num = min(int(sparse_rate * cols), cols)
+    if row_train_num > 0:
+        row_indices = torch.topk(metric, k=row_train_num, dim=1, largest=False).indices
+        row_offsets = torch.arange(rows, device=metric.device, dtype=torch.long).reshape(-1, 1) * cols
+        selected_indices = (row_offsets + row_indices.to(torch.long)).reshape(-1)
+    else:
+        selected_indices = torch.empty(0, dtype=torch.long, device=metric.device)
+
+    fill_num = target_num - selected_indices.numel()
+    if fill_num <= 0:
+        return selected_indices[:target_num]
+
+    flat_metric = metric.reshape(-1)
+    remaining_metric = flat_metric.clone()
+    if selected_indices.numel() > 0:
+        remaining_metric[selected_indices] = torch.inf
+    fill_indices = torch.topk(remaining_metric, k=fill_num, largest=False).indices
+    return torch.cat([selected_indices, fill_indices])
+
+
 def get_all_blocks(model):
     if "opt" not in model.name_or_path:
         return model.model.layers
@@ -64,8 +90,8 @@ def prepare_super_mask(
         metric_order="top",
         hybrid_top_ratio=None,
 ):
-    if metric_order not in {"top", "bottom", "hybrid"}:
-        raise ValueError("metric_order must be 'top', 'bottom', or 'hybrid'.")
+    if metric_order not in {"top", "bottom", "bottom-structured", "hybrid"}:
+        raise ValueError("metric_order must be 'top', 'bottom', 'bottom-structured', or 'hybrid'.")
     if metric_order == "hybrid":
         if hybrid_top_ratio is None:
             raise ValueError("hybrid_top_ratio is required when metric_order='hybrid'.")
@@ -188,15 +214,26 @@ def prepare_super_mask(
             if metric_order == "hybrid":
                 top_train_num = min(train_num, int(round(train_num * hybrid_top_ratio)))
                 bottom_train_num = train_num - top_train_num
+                row_train_num = 0
+                global_fill_train_num = 0
                 selected_parts = []
                 if top_train_num > 0:
                     selected_parts.append(torch.topk(flat_tensor, k=top_train_num, largest=True).indices)
                 if bottom_train_num > 0:
                     selected_parts.append(torch.topk(flat_tensor, k=bottom_train_num, largest=False).indices)
                 selected_indices = torch.cat(selected_parts)
+            elif metric_order == "bottom-structured":
+                selected_indices = select_rowwise_bottom_then_global_fill(W_metric, sparse_rate)
+                train_num = int(selected_indices.numel())
+                top_train_num = 0
+                bottom_train_num = train_num
+                row_train_num = int(sparse_rate * W_metric.shape[1])
+                global_fill_train_num = train_num - row_train_num * W_metric.shape[0]
             else:
                 top_train_num = train_num if metric_order == "top" else 0
                 bottom_train_num = train_num if metric_order == "bottom" else 0
+                row_train_num = 0
+                global_fill_train_num = 0
                 selected_indices = torch.topk(
                     flat_tensor,
                     k=train_num,
@@ -208,6 +245,8 @@ def prepare_super_mask(
                 subset[name].weight.wanda_topk_indices = selected_indices_cpu
             elif metric_order == "bottom":
                 subset[name].weight.wanda_bottomk_indices = selected_indices_cpu
+            elif metric_order == "bottom-structured":
+                subset[name].weight.wanda_bottom_structured_indices = selected_indices_cpu
             else:
                 subset[name].weight.wanda_hybrid_indices = selected_indices_cpu
 
@@ -224,6 +263,8 @@ def prepare_super_mask(
                         "train_num": int(train_num),
                         "top_train_num": int(top_train_num),
                         "bottom_train_num": int(bottom_train_num),
+                        "row_train_num": int(row_train_num),
+                        "global_fill_train_num": int(global_fill_train_num),
                         "numel": int(subset[name].weight.numel()),
                         "scaler_finite": bool(torch.isfinite(scaler).all().item()),
                         "scaler_nan_count": int(torch.isnan(scaler).sum().item()),
