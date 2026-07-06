@@ -35,6 +35,12 @@ def parse_super_hybrid_beta(indices_choice: str) -> float:
     return beta
 
 
+def select_magnitude_indices(weight: torch.Tensor, sparse_rate: float, largest: bool) -> torch.Tensor:
+    train_num = min(int(sparse_rate * weight.numel()) + 1, weight.numel())
+    metric = weight.detach().abs().reshape(-1)
+    return torch.topk(metric, k=train_num, largest=largest, sorted=False).indices.cpu()
+
+
 class DensePlusSparseLinear(torch.autograd.Function):
     @staticmethod
     @torch.amp.custom_fwd(device_type="cuda")
@@ -437,12 +443,21 @@ def get_dense_plus_sparse_model(
         return parent, target, target_name
 
     if not (
-        indices_choice in {"random", "super", "super-bottom", "super-bottom-structured", "full-delta", "full-delta-naive"}
+        indices_choice in {
+            "random",
+            "super",
+            "super-bottom",
+            "super-bottom-structured",
+            "magnitude",
+            "magnitude-bottom",
+            "full-delta",
+            "full-delta-naive",
+        }
         or indices_choice.startswith("super-hybrid-")
     ):
         raise ValueError(
-            "indices_choice must be 'random', 'super', 'super-bottom', 'super-bottom-structured', 'super-hybrid-<beta>', "
-            "'full-delta', or 'full-delta-naive'."
+            "indices_choice must be 'random', 'super', 'super-bottom', 'super-bottom-structured', "
+            "'super-hybrid-<beta>', 'magnitude', 'magnitude-bottom', 'full-delta', or 'full-delta-naive'."
         )
 
     replaced_modules = 0
@@ -467,6 +482,12 @@ def get_dense_plus_sparse_model(
             indices = getattr(old_module.weight, "full_delta_topk_indices", None)
             if indices is None:
                 raise RuntimeError("Full-delta indices were not prepared for a Super sparse layer.")
+        elif indices_choice in {"magnitude", "magnitude-bottom"}:
+            indices = select_magnitude_indices(
+                old_module.weight,
+                sparse_rate=sparse_rate,
+                largest=(indices_choice == "magnitude"),
+            )
         else:
             indices = None
         new_module = SparseDenseLinear(old_module, sparse_rate=sparse_rate, indices=indices)
@@ -491,6 +512,8 @@ def get_dense_plus_sparse_model(
             "super": "wanda-top",
             "super-bottom": "wanda-bottom",
             "super-bottom-structured": "wanda-bottom-structured-rowwise",
+            "magnitude": "magnitude-top",
+            "magnitude-bottom": "magnitude-bottom",
             "random": "random",
             "full-delta": "full-ft-delta-wanda-top",
             "full-delta-naive": "full-ft-delta-naive-top",

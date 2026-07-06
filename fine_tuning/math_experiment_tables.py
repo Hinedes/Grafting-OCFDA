@@ -346,6 +346,17 @@ def parse_method(method: str) -> Tuple[str, str, float]:
         return "rosa", "none", 0.0
     if method.startswith("sift"):
         return "sift", "random" if "rand" in method else "super", 0.0
+    if method in {"magnitude-topk", "magnitude-top", "magnitude", "super-magnitude", "mag-topk", "mag-top"}:
+        return "super", "magnitude", 0.0
+    if method in {
+        "magnitude-bottomk",
+        "magnitude-bottom",
+        "super-magnitude-bottom",
+        "super-magnitude-bottomk",
+        "mag-bottomk",
+        "mag-bottom",
+    }:
+        return "super", "magnitude-bottom", 0.0
     if method in {"super-delta-naive", "super-full-delta-naive", "super-fft-delta-naive", "super-ft-delta-naive"}:
         return "super", "full-delta-naive", 0.0
     if method in {
