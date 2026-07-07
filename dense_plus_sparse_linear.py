@@ -38,7 +38,7 @@ def parse_super_hybrid_beta(indices_choice: str) -> float:
 def select_magnitude_indices(weight: torch.Tensor, sparse_rate: float, largest: bool) -> torch.Tensor:
     train_num = min(int(sparse_rate * weight.numel()) + 1, weight.numel())
     metric = weight.detach().abs().reshape(-1)
-    return torch.topk(metric, k=train_num, largest=largest, sorted=False).indices.cpu()
+    return torch.topk(metric, k=train_num, largest=largest, sorted=True).indices.cpu()
 
 
 class DensePlusSparseLinear(torch.autograd.Function):

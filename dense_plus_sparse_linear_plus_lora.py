@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import math
 
-from dense_plus_sparse_linear import DensePlusSparseLinear, random_sparse_indices
+from dense_plus_sparse_linear import DensePlusSparseLinear, random_sparse_indices, select_magnitude_indices
 from src.mask import prepare_super_mask
 
 
@@ -105,8 +105,10 @@ def get_dense_plus_sparse_plus_lora_model(model,
         target = model.get_submodule(key)
         return parent, target, target_name
 
-    if indices_choice not in {"random", "super", "super-bottom"}:
-        raise ValueError("indices_choice must be 'random', 'super', or 'super-bottom'.")
+    if indices_choice not in {"random", "super", "super-bottom", "magnitude", "magnitude-bottom"}:
+        raise ValueError(
+            "indices_choice must be 'random', 'super', 'super-bottom', 'magnitude', or 'magnitude-bottom'."
+        )
 
     replaced_modules = 0
     total_indices = 0
@@ -119,6 +121,12 @@ def get_dense_plus_sparse_plus_lora_model(model,
             indices = getattr(old_module.weight, attr_name, None)
             if indices is None:
                 raise RuntimeError(f"Wanda indices were not prepared for a Supra sparse layer ({attr_name}).")
+        elif indices_choice in {"magnitude", "magnitude-bottom"}:
+            indices = select_magnitude_indices(
+                old_module.weight,
+                sparse_rate=sparse_rate,
+                largest=(indices_choice == "magnitude"),
+            )
         else:
             indices = None
         new_module = SparseDenseLoraLinear(old_module,
@@ -141,7 +149,13 @@ def get_dense_plus_sparse_plus_lora_model(model,
 
     print(
         "Sparse mask source:",
-        {"super": "wanda-top", "super-bottom": "wanda-bottom", "random": "random"}[indices_choice],
+        {
+            "super": "wanda-top",
+            "super-bottom": "wanda-bottom",
+            "magnitude": "magnitude-top",
+            "magnitude-bottom": "magnitude-bottom",
+            "random": "random",
+        }[indices_choice],
         "replaced modules:",
         replaced_modules,
         "sparse entries:",

@@ -386,6 +386,9 @@ def parse_method(method: str) -> Tuple[str, str, float]:
         if "bottom" in method:
             return "super", "super-bottom", 0.0
         return "super", "super", 0.0
+    if method.startswith("supra-magnitude-"):
+        ratio_text = method.removeprefix("supra-magnitude-")
+        return "supra", "magnitude-bottom", float(ratio_text)
     if method.startswith("supra"):
         pieces = method.split("-", 1)
         if len(pieces) != 2:
