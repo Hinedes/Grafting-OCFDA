@@ -1,5 +1,6 @@
 import json
 import os
+import time
 
 import torch
 import torch.nn as nn
@@ -394,6 +395,7 @@ def get_dense_plus_sparse_model(
         calibration_nsamples=128,
         calibration_seed=228,
         full_ft_checkpoint=None,
+        profile_stats=None,
 ):
     if indices_choice in {"super", "super-bottom", "super-bottom-structured"} or indices_choice.startswith("super-hybrid-"):
         assert tokenizer is not None, "`Super` option requires tokenizer to determine outliers indices."
@@ -402,6 +404,7 @@ def get_dense_plus_sparse_model(
             if indices_choice.startswith("super-hybrid-")
             else None
         )
+        calibration_start = time.perf_counter()
         prepare_super_mask(
             model,
             tokenizer,
@@ -417,14 +420,20 @@ def get_dense_plus_sparse_model(
             ),
             hybrid_top_ratio=hybrid_beta,
         )
+        if profile_stats is not None:
+            profile_stats["calibration_time_sec"] = time.perf_counter() - calibration_start
     elif indices_choice == "full-delta-naive":
+        calibration_start = time.perf_counter()
         prepare_full_delta_mask(
             model=model,
             target_modules_list=target_modules_list,
             sparse_rate=sparse_rate,
             full_ft_checkpoint=full_ft_checkpoint,
         )
+        if profile_stats is not None:
+            profile_stats["calibration_time_sec"] = time.perf_counter() - calibration_start
     elif indices_choice == "full-delta":
+        calibration_start = time.perf_counter()
         prepare_full_delta_wanda_mask(
             model=model,
             tokenizer=tokenizer,
@@ -435,6 +444,8 @@ def get_dense_plus_sparse_model(
             calibration_nsamples=calibration_nsamples,
             calibration_seed=calibration_seed,
         )
+        if profile_stats is not None:
+            profile_stats["calibration_time_sec"] = time.perf_counter() - calibration_start
 
     def _get_submodules(key):
         parent = model.get_submodule(".".join(key.split(".")[:-1]))

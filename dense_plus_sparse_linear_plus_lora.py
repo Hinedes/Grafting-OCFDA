@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import math
+import time
 
 from dense_plus_sparse_linear import DensePlusSparseLinear, random_sparse_indices, select_magnitude_indices
 from src.mask import prepare_super_mask
@@ -83,11 +84,13 @@ def get_dense_plus_sparse_plus_lora_model(model,
                                           exception=None,
                                           calibration_data="c4",
                                           calibration_nsamples=128,
-                                          calibration_seed=228):
+                                          calibration_seed=228,
+                                          profile_stats=None):
     if exception is None:
         exception = []
     if indices_choice in {"super", "super-bottom"}:
         assert tokenizer is not None, "`Super` option requires tokenizer to determine outliers indices."
+        calibration_start = time.perf_counter()
         prepare_super_mask(
             model,
             tokenizer,
@@ -98,6 +101,8 @@ def get_dense_plus_sparse_plus_lora_model(model,
             calibration_data=calibration_data,
             metric_order="bottom" if indices_choice == "super-bottom" else "top",
         )
+        if profile_stats is not None:
+            profile_stats["calibration_time_sec"] = time.perf_counter() - calibration_start
 
     def _get_submodules(key):
         parent = model.get_submodule(".".join(key.split(".")[:-1]))
