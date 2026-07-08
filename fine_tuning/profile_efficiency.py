@@ -637,11 +637,12 @@ def write_latex_table(path: str, rows: List[dict], caption: str, label: str) -> 
         f"\\caption{{{caption}}}",
         f"\\label{{{label}}}",
         "\\resizebox{\\textwidth}{!}{%",
-        "\\begin{tabular}{llrrrrrrrl}",
+        "\\begin{tabular}{llrrrrrrrrl}",
         "\\toprule",
         "\\textbf{Model} & \\textbf{Method} & \\textbf{Trainable Params} & "
         "\\textbf{Ckpt. Size} & \\textbf{Calib. Time} & \\textbf{Peak Mem.} & "
-        "\\textbf{Opt. State} & \\textbf{Steps/s} & \\textbf{Tokens/s} & \\textbf{Sparse impl.} \\\\",
+        "\\textbf{Opt. State} & \\textbf{Steps/s} & \\textbf{Tokens/s} & "
+        "\\textbf{Wall Time} & \\textbf{Sparse impl.} \\\\",
         "\\midrule",
     ]
     previous_model = None
@@ -661,6 +662,7 @@ def write_latex_table(path: str, rows: List[dict], caption: str, label: str) -> 
                     human_bytes(row.get("optimizer_state_bytes")),
                     human_rate(row.get("steps_per_sec"), digits=3),
                     human_rate(row.get("tokens_per_sec"), digits=0),
+                    human_seconds(row.get("wall_time_sec")),
                     row.get("sparse_impl_table") or sparse_impl_label(row["method"]),
                 ]
             )
