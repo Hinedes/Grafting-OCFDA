@@ -630,6 +630,10 @@ def sort_rows(rows: Iterable[dict], model_order: List[str], method_order: List[s
 
 
 def write_latex_table(path: str, rows: List[dict], caption: str, label: str) -> None:
+    model_row_counts: Dict[str, int] = {}
+    for row in rows:
+        model_row_counts[row["model"]] = model_row_counts.get(row["model"], 0) + 1
+
     lines = [
         "\\begin{table}[!t]",
         "\\centering",
@@ -637,23 +641,30 @@ def write_latex_table(path: str, rows: List[dict], caption: str, label: str) -> 
         f"\\caption{{{caption}}}",
         f"\\label{{{label}}}",
         "\\resizebox{\\textwidth}{!}{%",
-        "\\begin{tabular}{llrrrrrrrrl}",
+        "\\begin{tabular}{clrrrrrrrr}",
         "\\toprule",
         "\\textbf{Model} & \\textbf{Method} & \\textbf{Trainable Params} & "
         "\\textbf{Ckpt. Size} & \\textbf{Calib. Time} & \\textbf{Peak Mem.} & "
         "\\textbf{Opt. State} & \\textbf{Steps/s} & \\textbf{Tokens/s} & "
-        "\\textbf{Wall Time} & \\textbf{Sparse impl.} \\\\",
+        "\\textbf{Wall Time} \\\\",
         "\\midrule",
     ]
     previous_model = None
+    seen_model_rows: Dict[str, int] = {}
     for row in rows:
         if previous_model is not None and row["model"] != previous_model:
             lines.append("\\midrule")
         previous_model = row["model"]
+        seen_count = seen_model_rows.get(row["model"], 0)
+        if seen_count == 0:
+            model_cell = f"\\multirow{{{model_row_counts[row['model']]}}}{{*}}{{{model_label(row['model'])}}}"
+        else:
+            model_cell = ""
+        seen_model_rows[row["model"]] = seen_count + 1
         lines.append(
             " & ".join(
                 [
-                    model_label(row["model"]),
+                    model_cell,
                     method_label(row["method"]),
                     human_count(row.get("trainable_params")),
                     human_bytes(row.get("checkpoint_size_bytes")),
@@ -663,7 +674,6 @@ def write_latex_table(path: str, rows: List[dict], caption: str, label: str) -> 
                     human_rate(row.get("steps_per_sec"), digits=3),
                     human_rate(row.get("tokens_per_sec"), digits=0),
                     human_seconds(row.get("wall_time_sec")),
-                    row.get("sparse_impl_table") or sparse_impl_label(row["method"]),
                 ]
             )
             + " \\\\"
