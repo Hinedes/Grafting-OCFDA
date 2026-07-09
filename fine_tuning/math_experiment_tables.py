@@ -139,6 +139,13 @@ def get_gold_output(record: dict) -> str:
     return f"The answer is {answer}."
 
 
+def get_gold_answer(record: dict) -> str:
+    answer = record.get("answer")
+    if answer is not None:
+        return str(answer).strip()
+    return get_gold_output(record).strip()
+
+
 def get_model_input_device(model) -> torch.device:
     for parameter in model.parameters():
         if parameter.device.type != "meta":
@@ -152,6 +159,7 @@ def evaluate_perplexity_on_records(
     records: List[dict],
     max_length: int,
     max_examples: Optional[int] = None,
+    target_mode: str = "gold_output",
 ) -> Tuple[float, float, int]:
     model.eval()
     device = get_model_input_device(model)
@@ -165,8 +173,16 @@ def evaluate_perplexity_on_records(
 
     for record in records:
         prompt = generate_prompt(record.get("instruction", ""), record.get("input"))
-        target = get_gold_output(record)
-        full_text = prompt + target + eos
+        if target_mode == "gold_output":
+            target = get_gold_output(record)
+            full_text = prompt + target + eos
+        elif target_mode == "answer":
+            target = get_gold_answer(record)
+            full_text = prompt + target
+        else:
+            raise ValueError(f"Unsupported perplexity target mode: {target_mode}")
+        if not target:
+            continue
 
         prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
         encoded = tokenizer(
@@ -207,6 +223,7 @@ def evaluate_perplexity(
     datasets: Iterable[str],
     max_length: int,
     max_examples: Optional[int],
+    target_mode: str = "gold_output",
 ) -> Tuple[Dict[str, float], Dict[str, float], Dict[str, int]]:
     ppl_by_dataset: Dict[str, float] = {}
     nll_by_dataset: Dict[str, float] = {}
@@ -223,6 +240,7 @@ def evaluate_perplexity(
             records=records,
             max_length=max_length,
             max_examples=max_examples,
+            target_mode=target_mode,
         )
         ppl_by_dataset[dataset] = ppl
         nll_by_dataset[dataset] = nll
@@ -854,10 +872,14 @@ def finish_wandb(wandb_state) -> None:
         wandb_state["run"].finish()
 
 
-def build_tables(results: Iterable[dict], datasets: List[str]) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def build_tables(
+    results: Iterable[dict],
+    datasets: List[str],
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     index_cols = ["seed", "model", "lora_r", "lr", "method"]
     accuracy_rows = []
     ppl_rows = []
+    nll_rows = []
     summary_rows = []
 
     for row in results:
@@ -880,6 +902,13 @@ def build_tables(results: Iterable[dict], datasets: List[str]) -> Tuple[pd.DataF
             ppl_row[dataset] = row.get("ppl", {}).get(dataset)
         ppl_row["Average"] = row.get("ppl", {}).get("Average")
         ppl_rows.append(ppl_row)
+
+        nll_row = dict(index_values)
+        nll_row["trainable_params"] = trainable_params
+        for dataset in datasets:
+            nll_row[dataset] = row.get("nll", {}).get(dataset)
+        nll_row["Average"] = row.get("nll", {}).get("Average")
+        nll_rows.append(nll_row)
 
         summary_row = dict(index_values)
         summary_row.update(
@@ -910,19 +939,25 @@ def build_tables(results: Iterable[dict], datasets: List[str]) -> Tuple[pd.DataF
             lr_tuning_examples=row.get("lr_tuning", {}).get("examples"),
             average_accuracy=row.get("accuracy", {}).get("Average"),
             average_ppl=row.get("ppl", {}).get("Average"),
+            average_nll=row.get("nll", {}).get("Average"),
+            ppl_target=row.get("ppl_target"),
+            accuracy_eval_skipped=row.get("accuracy_eval_skipped"),
         )
         summary_rows.append(summary_row)
 
     accuracy_df = pd.DataFrame(accuracy_rows)
     ppl_df = pd.DataFrame(ppl_rows)
+    nll_df = pd.DataFrame(nll_rows)
     summary_df = pd.DataFrame(summary_rows)
     if not accuracy_df.empty:
         accuracy_df = accuracy_df.set_index(index_cols).sort_index()
     if not ppl_df.empty:
         ppl_df = ppl_df.set_index(index_cols).sort_index()
+    if not nll_df.empty:
+        nll_df = nll_df.set_index(index_cols).sort_index()
     if not summary_df.empty:
         summary_df = summary_df.set_index(index_cols).sort_index()
-    return accuracy_df, ppl_df, summary_df
+    return accuracy_df, ppl_df, nll_df, summary_df
 
 
 def format_mean_std(mean_df: pd.DataFrame, std_df: pd.DataFrame) -> pd.DataFrame:
@@ -1064,6 +1099,7 @@ def save_selected_lr_tables(
 
     aggregate("accuracy", "selected_accuracy")
     aggregate("ppl", "selected_ppl")
+    aggregate("nll", "selected_nll")
 
 
 def save_tables(
@@ -1073,12 +1109,13 @@ def save_tables(
     tuning_results: Optional[Iterable[dict]] = None,
 ) -> None:
     result_rows = list(results)
-    accuracy_df, ppl_df, summary_df = build_tables(result_rows, datasets)
+    accuracy_df, ppl_df, nll_df, summary_df = build_tables(result_rows, datasets)
     os.makedirs(out_dir, exist_ok=True)
 
     for name, df in [
         ("accuracy_table", accuracy_df),
         ("ppl_table", ppl_df),
+        ("nll_table", nll_df),
         ("summary_table", summary_df),
     ]:
         df.to_csv(os.path.join(out_dir, f"{name}.csv"))
@@ -1116,6 +1153,7 @@ def make_result_row(
         "calibration_seed": args.calibration_seed,
         "full_ft_checkpoint": args.full_ft_checkpoint,
         "val_split_seed": args.val_split_seed,
+        "ppl_target": args.ppl_target,
         "lr_tuning": lr_tuning,
         "checkpoint_dir": checkpoint_dir,
     }
@@ -1202,6 +1240,7 @@ def run_spec_once(
                 records=lr_tuning_records,
                 max_length=args.ppl_max_length,
                 max_examples=args.lr_tuning_max_examples,
+                target_mode=args.ppl_target,
             )
             lr_tuning = {"ppl": tune_ppl, "nll": tune_nll, "examples": tune_count}
             print(f"LR tuning validation ppl: {tune_ppl:.4f} (nll={tune_nll:.4f}, examples={tune_count})")
@@ -1224,20 +1263,24 @@ def run_spec_once(
         if full_eval:
             accuracy: Dict[str, float] = {}
             row["eval_progress_dir"] = os.path.join(args.out_dir, "eval_progress", spec.run_id)
-            for dataset in datasets:
-                score = eval_model(
-                    dataset_name=dataset,
-                    model=model,
-                    tokenizer=tokenizer,
-                    max_examples=args.accuracy_max_examples,
-                    max_new_tokens=args.generation_max_new_tokens,
-                    num_beams=args.generation_num_beams,
-                    verbose=args.verbose_generation_eval,
-                    progress_path=eval_progress_path(args.out_dir, spec, dataset),
-                ) * 100.0
-                accuracy[dataset] = score
-                print(f"{dataset} accuracy: {score:.4f}")
-            accuracy["Average"] = float(np.mean([accuracy[dataset] for dataset in datasets]))
+            if args.skip_accuracy_eval:
+                row["accuracy_eval_skipped"] = True
+                print("Skipping generation accuracy evaluation; computing NLL/PPL only.")
+            else:
+                for dataset in datasets:
+                    score = eval_model(
+                        dataset_name=dataset,
+                        model=model,
+                        tokenizer=tokenizer,
+                        max_examples=args.accuracy_max_examples,
+                        max_new_tokens=args.generation_max_new_tokens,
+                        num_beams=args.generation_num_beams,
+                        verbose=args.verbose_generation_eval,
+                        progress_path=eval_progress_path(args.out_dir, spec, dataset),
+                    ) * 100.0
+                    accuracy[dataset] = score
+                    print(f"{dataset} accuracy: {score:.4f}")
+                accuracy["Average"] = float(np.mean([accuracy[dataset] for dataset in datasets]))
 
             ppl, nll, ppl_examples = evaluate_perplexity(
                 model=model,
@@ -1245,6 +1288,7 @@ def run_spec_once(
                 datasets=datasets,
                 max_length=args.ppl_max_length,
                 max_examples=args.ppl_max_examples,
+                target_mode=args.ppl_target,
             )
             row.update(
                 selected_by_lr_tuning=(stage == "selected_full_eval"),
@@ -1363,8 +1407,11 @@ def run(args) -> None:
     print("Evaluation datasets:", datasets)
     print("Target modules:", target_modules)
     print("Validation split seed:", args.val_split_seed)
+    print("NLL/PPL target:", args.ppl_target)
     print("Output directory:", args.out_dir)
     print("Evaluation mode:", "all learning rates" if args.eval_all_lrs else "selected LR only")
+    if args.skip_accuracy_eval:
+        print("Accuracy generation eval: skipped")
 
     specs = list(iter_run_specs(args))
     if args.eval_all_lrs:
@@ -1401,7 +1448,13 @@ def run(args) -> None:
             val_set_size=args.val_set_size,
             split_seed=args.val_split_seed,
         )
-        print("LR tuning metric: validation perplexity on", len(lr_tuning_records), "held-out Math10K examples")
+        print(
+            "LR tuning metric:",
+            args.ppl_target,
+            "validation perplexity on",
+            len(lr_tuning_records),
+            "held-out examples",
+        )
 
     action_count = 0
     failure_count = 0
@@ -1530,8 +1583,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup_steps", type=int, default=100)
     parser.add_argument("--ppl_max_length", type=int, default=256)
     parser.add_argument("--ppl_max_examples", type=int, default=None)
+    parser.add_argument(
+        "--ppl_target",
+        choices=["gold_output", "answer"],
+        default="gold_output",
+        help="Text scored by benchmark NLL/PPL. gold_output preserves the original rationale/output target; answer scores only record['answer'].",
+    )
     parser.add_argument("--lr_tuning_max_examples", type=int, default=None)
     parser.add_argument("--accuracy_max_examples", type=int, default=None)
+    parser.add_argument(
+        "--skip_accuracy_eval",
+        action="store_true",
+        help="Skip generation accuracy during full eval and only compute benchmark NLL/PPL.",
+    )
     parser.add_argument("--generation_max_new_tokens", type=int, default=256)
     parser.add_argument("--generation_num_beams", type=int, default=4)
     parser.add_argument("--verbose_generation_eval", action="store_true")
