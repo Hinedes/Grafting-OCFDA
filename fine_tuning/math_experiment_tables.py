@@ -7,6 +7,7 @@ import pickle
 import random
 import re
 import sys
+import time
 import traceback
 from dataclasses import asdict, dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -1438,6 +1439,7 @@ def run_spec_once(
                     print(f"{dataset} accuracy: {score:.4f}")
                 accuracy["Average"] = float(np.mean([accuracy[dataset] for dataset in datasets]))
 
+            ppl_eval_start = time.perf_counter()
             if args.ppl_eval_data:
                 ppl, nll, ppl_examples = evaluate_perplexity_on_data_file(
                     model=model,
@@ -1459,12 +1461,15 @@ def run_spec_once(
                     target_mode=args.ppl_target,
                     eval_batch_size=args.ppl_eval_batch_size,
                 )
+            ppl_eval_time_sec = time.perf_counter() - ppl_eval_start
+            print(f"NLL/PPL evaluation time: {ppl_eval_time_sec:.3f} seconds")
             row.update(
                 selected_by_lr_tuning=(stage == "selected_full_eval"),
                 accuracy=accuracy,
                 ppl=ppl,
                 nll=nll,
                 ppl_examples=ppl_examples,
+                ppl_eval_time_sec=ppl_eval_time_sec,
             )
 
         return row
