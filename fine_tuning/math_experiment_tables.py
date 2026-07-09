@@ -5,6 +5,7 @@ import math
 import os
 import pickle
 import random
+import re
 import sys
 import traceback
 from dataclasses import asdict, dataclass
@@ -146,6 +147,57 @@ def get_gold_answer(record: dict) -> str:
     return get_gold_output(record).strip()
 
 
+def answer_text_variants(answer: str) -> List[str]:
+    answer = str(answer).strip()
+    variants = {answer}
+    try:
+        numeric_answer = float(answer.replace(",", ""))
+        if math.isfinite(numeric_answer):
+            if numeric_answer.is_integer():
+                integer_answer = int(numeric_answer)
+                variants.update(
+                    {
+                        str(integer_answer),
+                        f"{integer_answer:,}",
+                        f"{float(integer_answer):.1f}",
+                        f"{float(integer_answer):,.1f}",
+                    }
+                )
+            else:
+                compact_answer = ("%f" % numeric_answer).rstrip("0").rstrip(".")
+                variants.update({str(numeric_answer), f"{numeric_answer:,}", compact_answer})
+                if compact_answer:
+                    variants.add(f"{float(compact_answer):,}")
+    except ValueError:
+        pass
+    return sorted((variant for variant in variants if variant), key=lambda item: (len(item), item), reverse=True)
+
+
+def find_answer_span_in_output(output: str, answer: str) -> Optional[Tuple[int, int]]:
+    candidates: List[Tuple[int, int]] = []
+    for variant in answer_text_variants(answer):
+        if re.fullmatch(r"[A-Ea-e]", variant):
+            patterns = [
+                rf"\b{re.escape(variant)}\b(?=\s*\)|[\s.,:;!?]|$)",
+                rf"\b{re.escape(variant)}\)",
+            ]
+            flags = re.IGNORECASE
+        else:
+            patterns = [rf"(?<!\d){re.escape(variant)}(?!\d)"]
+            flags = 0
+        for pattern in patterns:
+            for match in re.finditer(pattern, output, flags):
+                variant_match = re.search(re.escape(variant), match.group(0), flags)
+                if variant_match is None:
+                    candidates.append(match.span())
+                else:
+                    start = match.start() + variant_match.start()
+                    candidates.append((start, start + len(variant)))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda span: (span[1], span[0]))
+
+
 def get_model_input_device(model) -> torch.device:
     for parameter in model.parameters():
         if parameter.device.type != "meta":
@@ -176,26 +228,54 @@ def evaluate_perplexity_on_records(
         if target_mode == "gold_output":
             target = get_gold_output(record)
             full_text = prompt + target + eos
+            label_char_span = None
         elif target_mode == "answer":
             target = get_gold_answer(record)
+            output = get_gold_output(record)
+            answer_span = find_answer_span_in_output(output, target)
+            if answer_span is None:
+                continue
+            full_text = prompt + output + eos
+            label_char_span = (len(prompt) + answer_span[0], len(prompt) + answer_span[1])
+        elif target_mode == "direct_answer":
+            target = get_gold_answer(record)
             full_text = prompt + target
+            label_char_span = None
         else:
             raise ValueError(f"Unsupported perplexity target mode: {target_mode}")
         if not target:
             continue
 
         prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
+        encode_kwargs = {}
+        if label_char_span is not None:
+            encode_kwargs["return_offsets_mapping"] = True
         encoded = tokenizer(
             full_text,
             truncation=True,
             max_length=max_length,
             return_tensors="pt",
             add_special_tokens=False,
+            **encode_kwargs,
         )
+        offsets = encoded.pop("offset_mapping", None)
         input_ids = encoded["input_ids"]
-        labels = input_ids.clone()
-        prompt_len = min(len(prompt_ids), labels.shape[1])
-        labels[:, :prompt_len] = -100
+        if label_char_span is None:
+            labels = input_ids.clone()
+            prompt_len = min(len(prompt_ids), labels.shape[1])
+            labels[:, :prompt_len] = -100
+        else:
+            labels = torch.full_like(input_ids, -100)
+            span_start, span_end = label_char_span
+            token_offsets = offsets[0].tolist()
+            max_observed_end = max((end for _, end in token_offsets), default=0)
+            if max_observed_end < span_end:
+                continue
+            for token_idx, (token_start, token_end) in enumerate(token_offsets):
+                if token_end <= token_start:
+                    continue
+                if token_end > span_start and token_start < span_end:
+                    labels[0, token_idx] = input_ids[0, token_idx]
         token_count = int((labels != -100).sum().item())
         if token_count == 0:
             continue
@@ -1628,9 +1708,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ppl_max_examples", type=int, default=None)
     parser.add_argument(
         "--ppl_target",
-        choices=["gold_output", "answer"],
+        choices=["gold_output", "answer", "direct_answer"],
         default="gold_output",
-        help="Text scored by benchmark NLL/PPL. gold_output preserves the original rationale/output target; answer scores only record['answer'].",
+        help=(
+            "Text scored by NLL/PPL. gold_output scores the supervised output; answer scores only the final "
+            "answer span inside the supervised output; direct_answer scores record['answer'] immediately after "
+            "the prompt."
+        ),
     )
     parser.add_argument(
         "--ppl_eval_data",
