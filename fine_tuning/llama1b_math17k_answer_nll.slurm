@@ -79,6 +79,9 @@ fi
 if [[ -n "${PPL_MAX_EXAMPLES:-}" ]]; then
   EXTRA_ARGS+=(--ppl_max_examples "$PPL_MAX_EXAMPLES")
 fi
+if [[ -n "${PPL_MAX_LENGTH:-}" ]]; then
+  EXTRA_ARGS+=(--ppl_max_length "$PPL_MAX_LENGTH")
+fi
 if [[ -n "${CALIBRATION_NSAMPLES:-}" ]]; then
   EXTRA_ARGS+=(--calibration_nsamples "$CALIBRATION_NSAMPLES")
 fi
