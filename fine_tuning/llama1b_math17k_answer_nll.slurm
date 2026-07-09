@@ -19,9 +19,11 @@ RUN_ROOT=${RUN_ROOT:-/mnt/data/u/$USER/runs/llama1b_math17k_answer_only_nll}
 MODELS=${MODELS:-meta-llama/Llama-3.2-1B}
 LORA_RS=${LORA_RS:-8}
 SEEDS=${SEEDS:-0}
-DATASETS=${DATASETS:-AddSub,MultiArith,SingleEq,gsm8k,AQuA,SVAMP}
+DATASETS=${DATASETS:-Math17K}
 WORKER_GPUS=${WORKER_GPUS:-0,1,2,3}
 TRAIN_DATA=${TRAIN_DATA:-ft-training_set/math_17k.json}
+PPL_EVAL_DATA=${PPL_EVAL_DATA:-$TRAIN_DATA}
+PPL_EVAL_NAME=${PPL_EVAL_NAME:-Math17K}
 CALIBRATION_DATA=${CALIBRATION_DATA:-c4}
 NUM_EPOCHS=${NUM_EPOCHS:-1}
 WARMUP_STEPS=${WARMUP_STEPS:-100}
@@ -53,12 +55,7 @@ CKPT="$RUN_ROOT/checkpoints_answer_only_nll"
 mkdir -p "$RUN_ROOT" "$OUT" "$CKPT" "$WANDB_DIR" "$HF_HOME"
 
 test -f "$TRAIN_DATA"
-test -f dataset/AddSub/test.json
-test -f dataset/MultiArith/test.json
-test -f dataset/SingleEq/test.json
-test -f dataset/gsm8k/test.json
-test -f dataset/AQuA/test.json
-test -f dataset/SVAMP/test.json
+test -f "$PPL_EVAL_DATA"
 
 EXTRA_ARGS=()
 if [[ -n "${TARGET_MODULES:-}" ]]; then
@@ -99,6 +96,8 @@ python run_answer_only_nll_methods.py \
   --lora_rs "$LORA_RS" \
   --seeds "$SEEDS" \
   --train_data "$TRAIN_DATA" \
+  --ppl_eval_data "$PPL_EVAL_DATA" \
+  --ppl_eval_name "$PPL_EVAL_NAME" \
   --calibration_data "$CALIBRATION_DATA" \
   --num_epochs "$NUM_EPOCHS" \
   --warmup_steps "$WARMUP_STEPS" \

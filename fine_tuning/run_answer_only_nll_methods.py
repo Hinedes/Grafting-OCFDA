@@ -11,7 +11,6 @@ from launch_math_methods import (
     stop_running_jobs,
     wait_for_slot,
 )
-from math_experiment_tables import MATH_BENCHMARKS
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -46,7 +45,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--gpus", default="0,1,2,3")
     parser.add_argument("--method_lrs", default=DEFAULT_METHOD_LRS)
-    parser.add_argument("--datasets", default=",".join(MATH_BENCHMARKS))
+    parser.add_argument("--datasets", default="Math17K")
     parser.add_argument("--base_out_dir", default="out_answer_only_nll")
     parser.add_argument("--base_checkpoint_dir", default="checkpoints_answer_only_nll")
     parser.add_argument("--script", default=os.path.join(SCRIPT_DIR, "math_experiment_tables.py"))

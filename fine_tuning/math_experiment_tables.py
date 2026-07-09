@@ -260,6 +260,32 @@ def evaluate_perplexity(
     return ppl_by_dataset, nll_by_dataset, count_by_dataset
 
 
+def evaluate_perplexity_on_data_file(
+    model,
+    tokenizer,
+    data_path: str,
+    data_name: str,
+    max_length: int,
+    max_examples: Optional[int],
+    target_mode: str = "gold_output",
+) -> Tuple[Dict[str, float], Dict[str, float], Dict[str, int]]:
+    records = load_json(data_path)
+    ppl, nll, count = evaluate_perplexity_on_records(
+        model=model,
+        tokenizer=tokenizer,
+        records=records,
+        max_length=max_length,
+        max_examples=max_examples,
+        target_mode=target_mode,
+    )
+    print(f"{data_name} perplexity: {ppl:.4f} (nll={nll:.4f}, examples={count})")
+    return (
+        {data_name: ppl, "Average": ppl},
+        {data_name: nll, "Average": nll},
+        {data_name: count},
+    )
+
+
 def load_lr_tuning_records(train_data: str, val_set_size: int, split_seed: int) -> List[dict]:
     from datasets import load_dataset  # noqa: PLC0415
 
@@ -941,6 +967,8 @@ def build_tables(
             average_ppl=row.get("ppl", {}).get("Average"),
             average_nll=row.get("nll", {}).get("Average"),
             ppl_target=row.get("ppl_target"),
+            ppl_eval_data=row.get("ppl_eval_data"),
+            ppl_eval_name=row.get("ppl_eval_name"),
             accuracy_eval_skipped=row.get("accuracy_eval_skipped"),
         )
         summary_rows.append(summary_row)
@@ -1154,6 +1182,8 @@ def make_result_row(
         "full_ft_checkpoint": args.full_ft_checkpoint,
         "val_split_seed": args.val_split_seed,
         "ppl_target": args.ppl_target,
+        "ppl_eval_data": args.ppl_eval_data,
+        "ppl_eval_name": args.ppl_eval_name,
         "lr_tuning": lr_tuning,
         "checkpoint_dir": checkpoint_dir,
     }
@@ -1282,14 +1312,25 @@ def run_spec_once(
                     print(f"{dataset} accuracy: {score:.4f}")
                 accuracy["Average"] = float(np.mean([accuracy[dataset] for dataset in datasets]))
 
-            ppl, nll, ppl_examples = evaluate_perplexity(
-                model=model,
-                tokenizer=tokenizer,
-                datasets=datasets,
-                max_length=args.ppl_max_length,
-                max_examples=args.ppl_max_examples,
-                target_mode=args.ppl_target,
-            )
+            if args.ppl_eval_data:
+                ppl, nll, ppl_examples = evaluate_perplexity_on_data_file(
+                    model=model,
+                    tokenizer=tokenizer,
+                    data_path=args.ppl_eval_data,
+                    data_name=args.ppl_eval_name,
+                    max_length=args.ppl_max_length,
+                    max_examples=args.ppl_max_examples,
+                    target_mode=args.ppl_target,
+                )
+            else:
+                ppl, nll, ppl_examples = evaluate_perplexity(
+                    model=model,
+                    tokenizer=tokenizer,
+                    datasets=datasets,
+                    max_length=args.ppl_max_length,
+                    max_examples=args.ppl_max_examples,
+                    target_mode=args.ppl_target,
+                )
             row.update(
                 selected_by_lr_tuning=(stage == "selected_full_eval"),
                 accuracy=accuracy,
@@ -1408,6 +1449,8 @@ def run(args) -> None:
     print("Target modules:", target_modules)
     print("Validation split seed:", args.val_split_seed)
     print("NLL/PPL target:", args.ppl_target)
+    if args.ppl_eval_data:
+        print("NLL/PPL eval data:", args.ppl_eval_name, "=", args.ppl_eval_data)
     print("Output directory:", args.out_dir)
     print("Evaluation mode:", "all learning rates" if args.eval_all_lrs else "selected LR only")
     if args.skip_accuracy_eval:
@@ -1589,6 +1632,12 @@ def parse_args() -> argparse.Namespace:
         default="gold_output",
         help="Text scored by benchmark NLL/PPL. gold_output preserves the original rationale/output target; answer scores only record['answer'].",
     )
+    parser.add_argument(
+        "--ppl_eval_data",
+        default="",
+        help="Optional JSON file for full-eval NLL/PPL. When set, NLL/PPL is computed on this file instead of benchmark datasets.",
+    )
+    parser.add_argument("--ppl_eval_name", default="Math17K")
     parser.add_argument("--lr_tuning_max_examples", type=int, default=None)
     parser.add_argument("--accuracy_max_examples", type=int, default=None)
     parser.add_argument(
