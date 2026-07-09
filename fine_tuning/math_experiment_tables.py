@@ -212,6 +212,7 @@ def evaluate_perplexity_on_records(
     max_length: int,
     max_examples: Optional[int] = None,
     target_mode: str = "gold_output",
+    eval_batch_size: int = 1,
 ) -> Tuple[float, float, int]:
     model.eval()
     device = get_model_input_device(model)
@@ -219,6 +220,7 @@ def evaluate_perplexity_on_records(
     total_nll = 0.0
     total_tokens = 0
     used_examples = 0
+    batch_features = []
 
     if max_examples is not None:
         records = records[:max_examples]
@@ -280,21 +282,60 @@ def evaluate_perplexity_on_records(
         if token_count == 0:
             continue
 
-        batch = {key: value.to(device) for key, value in encoded.items()}
-        labels = labels.to(device)
+        batch_features.append(
+            {
+                "input_ids": input_ids[0].tolist(),
+                "attention_mask": encoded["attention_mask"][0].tolist(),
+                "labels": labels[0].tolist(),
+                "token_count": token_count,
+            }
+        )
 
-        with torch.no_grad():
-            outputs = model(**batch, labels=labels, use_cache=False)
+        if len(batch_features) >= eval_batch_size:
+            batch_nll, batch_tokens, batch_count = score_perplexity_batch(model, batch_features, tokenizer, device)
+            total_nll += batch_nll
+            total_tokens += batch_tokens
+            used_examples += batch_count
+            batch_features = []
 
-        total_nll += float(outputs.loss.item()) * token_count
-        total_tokens += token_count
-        used_examples += 1
+    if batch_features:
+        batch_nll, batch_tokens, batch_count = score_perplexity_batch(model, batch_features, tokenizer, device)
+        total_nll += batch_nll
+        total_tokens += batch_tokens
+        used_examples += batch_count
 
     if total_tokens == 0:
         return float("nan"), float("nan"), used_examples
 
     mean_nll = total_nll / total_tokens
     return float(math.exp(min(mean_nll, 50.0))), mean_nll, used_examples
+
+
+def score_perplexity_batch(model, features: List[dict], tokenizer, device: torch.device) -> Tuple[float, int, int]:
+    max_len = max(len(feature["input_ids"]) for feature in features)
+    pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
+    input_ids = []
+    attention_mask = []
+    labels = []
+    for feature in features:
+        pad_len = max_len - len(feature["input_ids"])
+        input_ids.append(feature["input_ids"] + [pad_id] * pad_len)
+        attention_mask.append(feature["attention_mask"] + [0] * pad_len)
+        labels.append(feature["labels"] + [-100] * pad_len)
+
+    batch = {
+        "input_ids": torch.tensor(input_ids, dtype=torch.long, device=device),
+        "attention_mask": torch.tensor(attention_mask, dtype=torch.long, device=device),
+    }
+    label_tensor = torch.tensor(labels, dtype=torch.long, device=device)
+    token_count = int((label_tensor != -100).sum().item())
+    if token_count == 0:
+        return 0.0, 0, 0
+
+    with torch.no_grad():
+        outputs = model(**batch, labels=label_tensor, use_cache=False)
+
+    return float(outputs.loss.item()) * token_count, token_count, len(features)
 
 
 def evaluate_perplexity(
@@ -304,6 +345,7 @@ def evaluate_perplexity(
     max_length: int,
     max_examples: Optional[int],
     target_mode: str = "gold_output",
+    eval_batch_size: int = 1,
 ) -> Tuple[Dict[str, float], Dict[str, float], Dict[str, int]]:
     ppl_by_dataset: Dict[str, float] = {}
     nll_by_dataset: Dict[str, float] = {}
@@ -321,6 +363,7 @@ def evaluate_perplexity(
             max_length=max_length,
             max_examples=max_examples,
             target_mode=target_mode,
+            eval_batch_size=eval_batch_size,
         )
         ppl_by_dataset[dataset] = ppl
         nll_by_dataset[dataset] = nll
@@ -348,6 +391,7 @@ def evaluate_perplexity_on_data_file(
     max_length: int,
     max_examples: Optional[int],
     target_mode: str = "gold_output",
+    eval_batch_size: int = 1,
 ) -> Tuple[Dict[str, float], Dict[str, float], Dict[str, int]]:
     records = load_json(data_path)
     ppl, nll, count = evaluate_perplexity_on_records(
@@ -357,6 +401,7 @@ def evaluate_perplexity_on_data_file(
         max_length=max_length,
         max_examples=max_examples,
         target_mode=target_mode,
+        eval_batch_size=eval_batch_size,
     )
     print(f"{data_name} perplexity: {ppl:.4f} (nll={nll:.4f}, examples={count})")
     return (
@@ -1351,6 +1396,7 @@ def run_spec_once(
                 max_length=args.ppl_max_length,
                 max_examples=args.lr_tuning_max_examples,
                 target_mode=args.ppl_target,
+                eval_batch_size=args.ppl_eval_batch_size,
             )
             lr_tuning = {"ppl": tune_ppl, "nll": tune_nll, "examples": tune_count}
             print(f"LR tuning validation ppl: {tune_ppl:.4f} (nll={tune_nll:.4f}, examples={tune_count})")
@@ -1401,6 +1447,7 @@ def run_spec_once(
                     max_length=args.ppl_max_length,
                     max_examples=args.ppl_max_examples,
                     target_mode=args.ppl_target,
+                    eval_batch_size=args.ppl_eval_batch_size,
                 )
             else:
                 ppl, nll, ppl_examples = evaluate_perplexity(
@@ -1410,6 +1457,7 @@ def run_spec_once(
                     max_length=args.ppl_max_length,
                     max_examples=args.ppl_max_examples,
                     target_mode=args.ppl_target,
+                    eval_batch_size=args.ppl_eval_batch_size,
                 )
             row.update(
                 selected_by_lr_tuning=(stage == "selected_full_eval"),
@@ -1502,6 +1550,8 @@ def run(args) -> None:
         raise ValueError("--rosa_lora_budget_ratio must be in [0, 1].")
     if args.budget_tolerance_pct < 0.0:
         raise ValueError("--budget_tolerance_pct must be nonnegative.")
+    if args.ppl_eval_batch_size <= 0:
+        raise ValueError("--ppl_eval_batch_size must be positive.")
     if not args.eval_all_lrs and args.skip_lr_tuning_metric:
         raise ValueError("--skip_lr_tuning_metric cannot be used with selected-only evaluation.")
     if any(parse_method(method)[1].startswith("full-delta") for method in parse_csv_list(args.methods, str)):
@@ -1706,6 +1756,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup_steps", type=int, default=100)
     parser.add_argument("--ppl_max_length", type=int, default=256)
     parser.add_argument("--ppl_max_examples", type=int, default=None)
+    parser.add_argument("--ppl_eval_batch_size", type=int, default=1)
     parser.add_argument(
         "--ppl_target",
         choices=["gold_output", "answer", "direct_answer"],
