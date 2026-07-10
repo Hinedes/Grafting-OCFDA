@@ -1,3 +1,4 @@
+# Modified for integration with the Super-Tuning experiment pipeline.
 import torch
 from .layer import RosaLayer
 from .hooks import SaveInputHook, ManualGradCollectorHook
@@ -223,4 +224,3 @@ class RosaScheduler(TrainerCallback, COMPOSER_ALG_CLASS):
             raise SystemExit()
         else:
             self._set_spa_masks(masks)
-

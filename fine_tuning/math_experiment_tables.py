@@ -10,23 +10,25 @@ import sys
 import time
 import traceback
 from dataclasses import asdict, dataclass
+from importlib.metadata import version
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import torch
-from importlib.metadata import version
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
-
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_DIR = os.path.dirname(SCRIPT_DIR)
-os.chdir(SCRIPT_DIR)
 sys.path.insert(0, SCRIPT_DIR)
 sys.path.insert(1, REPO_DIR)
 
-from evaluate import eval_model  # noqa: E402
-from finetune import train  # noqa: E402
+try:
+    from .evaluate import eval_model  # noqa: E402
+    from .finetune import train  # noqa: E402
+except ImportError:
+    from evaluate import eval_model  # noqa: E402
+    from finetune import train  # noqa: E402
 
 
 FULL_LLAMA_TARGET_MODULES = [
@@ -41,8 +43,9 @@ FULL_LLAMA_TARGET_MODULES = [
 
 LEGACY_TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "up_proj", "down_proj"]
 MATH_BENCHMARKS = ["AddSub", "MultiArith", "SingleEq", "gsm8k", "AQuA", "SVAMP"]
-DEFAULT_METHODS = "base,lora,super-wanda,super-rand,supra-0.3,supra-0.5,supra-0.8,sift-topk,sift-rand,rosa"
+DEFAULT_METHODS = "supra-0.8-bottom"
 DEFAULT_LRS = "5e-5,1e-4,5e-4,1e-3,5e-3,1e-2,5e-2,1e-1"
+DEFAULT_TRAIN_DATA = os.path.join(SCRIPT_DIR, "ft-training_set", "math_17k.json")
 
 
 @dataclass(frozen=True)
@@ -108,8 +111,8 @@ def load_json(path: str) -> List[dict]:
         return json.load(f)
 
 
-def resolve_dataset_path(dataset_name: str) -> str:
-    return os.path.join(SCRIPT_DIR, "dataset", dataset_name, "test.json")
+def resolve_dataset_path(dataset_name: str, dataset_dir: Optional[str] = None) -> str:
+    return os.path.join(dataset_dir or os.path.join(SCRIPT_DIR, "dataset"), dataset_name, "test.json")
 
 
 def generate_prompt(instruction: str, input_text: Optional[str] = None) -> str:
@@ -347,6 +350,7 @@ def evaluate_perplexity(
     max_examples: Optional[int],
     target_mode: str = "gold_output",
     eval_batch_size: int = 1,
+    dataset_dir: Optional[str] = None,
 ) -> Tuple[Dict[str, float], Dict[str, float], Dict[str, int]]:
     ppl_by_dataset: Dict[str, float] = {}
     nll_by_dataset: Dict[str, float] = {}
@@ -356,7 +360,7 @@ def evaluate_perplexity(
     total_examples = 0
 
     for dataset in datasets:
-        records = load_json(resolve_dataset_path(dataset))
+        records = load_json(resolve_dataset_path(dataset, dataset_dir=dataset_dir))
         ppl, nll, count = evaluate_perplexity_on_records(
             model=model,
             tokenizer=tokenizer,
@@ -558,7 +562,10 @@ def parse_method(method: str) -> Tuple[str, str, float]:
         return "super", "super", 0.0
     if method.startswith("supra-magnitude-"):
         ratio_text = method.removeprefix("supra-magnitude-")
-        return "supra", "magnitude-bottom", float(ratio_text)
+        ratio = float(ratio_text)
+        if not 0.0 <= ratio <= 1.0:
+            raise ValueError("Supra lambda must be in [0, 1].")
+        return "supra", "magnitude-bottom", ratio
     if method.startswith("supra"):
         pieces = method.split("-", 1)
         if len(pieces) != 2:
@@ -568,7 +575,10 @@ def parse_method(method: str) -> Tuple[str, str, float]:
         if ratio_text.endswith("-bottom"):
             mask_choice = "super-bottom"
             ratio_text = ratio_text.removesuffix("-bottom")
-        return "supra", mask_choice, float(ratio_text)
+        ratio = float(ratio_text)
+        if not 0.0 <= ratio <= 1.0:
+            raise ValueError("Supra lambda must be in [0, 1].")
+        return "supra", mask_choice, ratio
     raise ValueError(f"Unknown method: {method}")
 
 
@@ -702,6 +712,21 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
         lora_params_ratio = args.rosa_lora_budget_ratio
     train_adapter_name = "no" if adapter_name == "full" else adapter_name
 
+    if args.dry_run and adapter_name == "base":
+        print(
+            "DRY RUN:",
+            json.dumps(
+                {
+                    "base_model": spec.model,
+                    "adapter_name": "base",
+                    "method_name": spec.method,
+                    "output_dir": output_dir,
+                },
+                indent=2,
+            ),
+        )
+        return None, None, output_dir
+
     if adapter_name == "base":
         tokenizer = AutoTokenizer.from_pretrained(spec.model, trust_remote_code=True)
         tokenizer.pad_token_id = 0
@@ -742,11 +767,12 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
         lora_r=budget_plan["train_lora_r"],
         lora_params_ratio=lora_params_ratio,
         adapter_name=train_adapter_name,
+        method_name=spec.method,
         random_indices=random_indices,
         max_steps=args.max_steps,
         warmup_steps=args.warmup_steps,
         optimizer_name=args.optimizer_name,
-        save_model=args.save_adapters and adapter_name != "full",
+        save_model=args.save_adapters,
     )
     training_curve_dir = getattr(args, "training_curve_dir", "")
     if training_curve_dir:
@@ -796,7 +822,10 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
 
     if adapter_name == "rosa":
         train_rosa = import_rosa_train()
-        model, tokenizer = train_rosa(**common_kwargs)
+        rosa_kwargs = dict(common_kwargs)
+        rosa_kwargs.pop("lora_params_ratio")
+        rosa_kwargs.pop("random_indices")
+        model, tokenizer = train_rosa(**rosa_kwargs)
     else:
         model, tokenizer = train(**common_kwargs)
     return model, tokenizer, output_dir
@@ -1302,6 +1331,7 @@ def make_result_row(
         **trainable_param_report,
         "target_modules": target_modules,
         "train_data": args.train_data,
+        "dataset_dir": args.dataset_dir,
         "calibration_data": resolved_calibration_data(args),
         "calibration_nsamples": args.calibration_nsamples,
         "calibration_seed": args.calibration_seed,
@@ -1429,6 +1459,7 @@ def run_spec_once(
                         dataset_name=dataset,
                         model=model,
                         tokenizer=tokenizer,
+                        dataset_dir=args.dataset_dir,
                         max_examples=args.accuracy_max_examples,
                         max_new_tokens=args.generation_max_new_tokens,
                         num_beams=args.generation_num_beams,
@@ -1460,6 +1491,7 @@ def run_spec_once(
                     max_examples=args.ppl_max_examples,
                     target_mode=args.ppl_target,
                     eval_batch_size=args.ppl_eval_batch_size,
+                    dataset_dir=args.dataset_dir,
                 )
             ppl_eval_time_sec = time.perf_counter() - ppl_eval_start
             print(f"NLL/PPL evaluation time: {ppl_eval_time_sec:.3f} seconds")
@@ -1551,6 +1583,12 @@ def iter_run_specs(args) -> Iterable[RunSpec]:
 
 def run(args) -> None:
     print_environment()
+    if args.batch_size <= 0 or args.micro_batch_size <= 0:
+        raise ValueError("--batch_size and --micro_batch_size must be positive.")
+    if args.batch_size % args.micro_batch_size != 0:
+        raise ValueError("--batch_size must be divisible by --micro_batch_size.")
+    if args.calibration_nsamples <= 0:
+        raise ValueError("--calibration_nsamples must be positive.")
     if not 0.0 <= args.rosa_lora_budget_ratio <= 1.0:
         raise ValueError("--rosa_lora_budget_ratio must be in [0, 1].")
     if args.budget_tolerance_pct < 0.0:
@@ -1730,19 +1768,29 @@ def run(args) -> None:
 
 
 def parse_args() -> argparse.Namespace:
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument("--config", default="")
+    config_args, _ = config_parser.parse_known_args()
+
     parser = argparse.ArgumentParser(
-        description="Train PEFT methods on Math10K and construct math accuracy/perplexity tables."
+        description="Tune and evaluate PEFT methods on the Math17K arithmetic setup."
     )
+    parser.add_argument("--config", default=config_args.config, help="JSON file containing experiment defaults.")
     parser.add_argument("--models", default="meta-llama/Llama-3.2-1B")
     parser.add_argument("--methods", default=DEFAULT_METHODS)
     parser.add_argument("--lora_rs", default="8")
     parser.add_argument("--lrs", default=DEFAULT_LRS)
     parser.add_argument("--seeds", default="0")
     parser.add_argument("--datasets", default=",".join(MATH_BENCHMARKS))
+    parser.add_argument(
+        "--dataset_dir",
+        default=os.path.join(SCRIPT_DIR, "dataset"),
+        help="Directory containing <dataset>/test.json files.",
+    )
     parser.add_argument("--target_modules", default=",".join(FULL_LLAMA_TARGET_MODULES))
     parser.add_argument("--legacy_target_modules", action="store_true")
-    parser.add_argument("--train_data", default="ft-training_set/math_10k.json")
-    parser.add_argument("--calibration_data", default="same_as_train")
+    parser.add_argument("--train_data", default=DEFAULT_TRAIN_DATA)
+    parser.add_argument("--calibration_data", default="c4")
     parser.add_argument("--calibration_nsamples", type=int, default=128)
     parser.add_argument("--calibration_seed", type=int, default=228)
     parser.add_argument("--full_ft_checkpoint", default="")
@@ -1826,8 +1874,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--shard_id", type=int, default=0)
     parser.add_argument("--dry_run", action="store_true")
     parser.set_defaults(eval_all_lrs=False)
+
+    if config_args.config:
+        with open(config_args.config, "r") as config_file:
+            config = json.load(config_file)
+        valid_keys = {action.dest for action in parser._actions}
+        unknown_keys = sorted(set(config) - valid_keys)
+        if unknown_keys:
+            parser.error(f"Unknown keys in {config_args.config}: {', '.join(unknown_keys)}")
+        parser.set_defaults(**config)
+
     return parser.parse_args()
 
 
-if __name__ == "__main__":
+def main() -> None:
     run(parse_args())
+
+
+if __name__ == "__main__":
+    main()

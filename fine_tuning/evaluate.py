@@ -1,67 +1,57 @@
+"""Exact-answer evaluation for the six arithmetic benchmarks."""
+
+from __future__ import annotations
+
 import copy
 import json
 import os
 import re
-import sys
-import argparse
-
-import fire
+from typing import Optional
 
 import torch
-
-sys.path.append(os.path.join(os.getcwd(), "peft/src/"))
-from peft import PeftModel
 from tqdm import tqdm
-from transformers import GenerationConfig, LlamaForCausalLM, LlamaTokenizer, AutoModelForCausalLM, AutoTokenizer
+from transformers import GenerationConfig
 
-if torch.cuda.is_available():
-    device = "cuda"
-else:
-    device = "cpu"
 
-try:
-    if torch.backends.mps.is_available():
-        device = "mps"
-except:  # noqa: E722
-    pass
+def _model_device(model) -> torch.device:
+    for parameter in model.parameters():
+        if parameter.device.type != "meta":
+            return parameter.device
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def eval_model(
-    dataset_name,
+    dataset_name: str,
     model,
     tokenizer,
-    max_examples=None,
-    max_new_tokens=256,
-    num_beams=4,
-    verbose=False,
-    progress_path=None,
-    resume_progress=True,
+    dataset_dir: Optional[str] = None,
+    max_examples: Optional[int] = None,
+    max_new_tokens: int = 256,
+    num_beams: int = 4,
+    verbose: bool = False,
+    progress_path: Optional[str] = None,
+    resume_progress: bool = True,
 ) -> float:
-    def evaluate(
-            instruction,
-            input=None,
-            **kwargs,
-    ):
-        prompt = generate_prompt(instruction, input)
+    device = _model_device(model)
+
+    def generate(instruction: str, input_text: Optional[str] = None) -> str:
+        prompt = generate_prompt(instruction, input_text)
         inputs = tokenizer(prompt, return_tensors="pt")
-        input_ids = inputs["input_ids"].to(device)
-        attention_mask = inputs.get("attention_mask")
-        if attention_mask is not None:
-            attention_mask = attention_mask.to(device)
+        inputs = {name: tensor.to(device) for name, tensor in inputs.items()}
         generation_config = GenerationConfig(
             num_beams=num_beams,
             do_sample=False,
-            pad_token_id=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id,
+            pad_token_id=(
+                tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+            ),
             eos_token_id=tokenizer.eos_token_id,
-            **kwargs,
         )
         previous_use_cache = getattr(model.config, "use_cache", None)
         model.config.use_cache = True
         try:
             with torch.no_grad():
-                generation_output = model.generate(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
+                output = model.generate(
+                    **inputs,
                     generation_config=generation_config,
                     return_dict_in_generate=True,
                     output_scores=False,
@@ -71,32 +61,13 @@ def eval_model(
         finally:
             if previous_use_cache is not None:
                 model.config.use_cache = previous_use_cache
-        s = generation_output.sequences[0]
-        output = tokenizer.decode(s, skip_special_tokens=True)
-        if "### Response:" in output:
-            return output.split("### Response:", 1)[1].strip()
-        return output.strip()
 
-    """
-    # testing code for readme
-    for instruction in [
-        "Tell me about alpacas.",
-        "Tell me about the president of Mexico in 2019.",
-        "Tell me about the king of France in 2019.",
-        "List all Canadian provinces in alphabetical order.",
-        "Write a Python program that prints the first 10 Fibonacci numbers.",
-        "Write a program that prints the numbers from 1 to 100. But for multiples of three print 'Fizz' instead of the number and for the multiples of five print 'Buzz'. For numbers which are multiples of both three and five print 'FizzBuzz'.",  # noqa: E501
-        "Tell me five words that rhyme with 'shock'.",
-        "Translate the sentence 'I have no mouth but I must scream' into Spanish.",
-        "Count up from 1 to 500.",
-    ]:
-        print("Instruction:", instruction)
-        print("Response:", evaluate(instruction))
-        print()
-    """
+        decoded = tokenizer.decode(output.sequences[0], skip_special_tokens=True)
+        if "### Response:" in decoded:
+            return decoded.split("### Response:", 1)[1].strip()
+        return decoded.strip()
 
-    dataset = load_data(dataset_name)
-
+    dataset = load_data(dataset_name, dataset_dir=dataset_dir)
     if max_examples is not None:
         dataset = dataset[:max_examples]
 
@@ -104,377 +75,107 @@ def eval_model(
     completed = _load_eval_progress(progress_path, total) if resume_progress else {}
     correct = sum(1 for row in completed.values() if row.get("flag"))
     completed_count = len(completed)
-    miss = 0.001
-    pbar = tqdm(total=total, initial=completed_count)
 
-    if progress_path:
-        if completed_count:
-            print(f"Resuming {dataset_name} eval from {completed_count}/{total}: {progress_path}")
-        else:
-            print(f"Writing {dataset_name} eval progress to: {progress_path}")
+    with tqdm(total=total, initial=completed_count, desc=dataset_name) as progress:
+        for index, record in enumerate(dataset):
+            if index in completed:
+                continue
 
-    accuracy = correct / completed_count if completed_count else 0.0
+            prediction_text = generate(record.get("instruction", ""), record.get("input"))
+            label = record.get("answer")
+            if dataset_name.lower() == "aqua":
+                prediction = extract_answer_letter(prediction_text)
+                is_correct = str(label) == prediction
+            else:
+                prediction = extract_answer_number(dataset_name, prediction_text)
+                is_correct = abs(float(label) - prediction) <= 0.001
 
-    for idx, data in enumerate(dataset):
-        if idx in completed:
-            continue
+            correct += int(is_correct)
+            completed_count += 1
+            accuracy = correct / completed_count
+            result = copy.deepcopy(record)
+            result.update(
+                output_pred=prediction_text,
+                pred=prediction,
+                flag=is_correct,
+                idx=index,
+                dataset=dataset_name,
+                total=total,
+            )
+            _append_eval_progress(progress_path, result)
+            if verbose:
+                print(f"\n{dataset_name} #{index}: prediction={prediction!r}, label={label!r}")
+                print(prediction_text)
+            progress.set_postfix(accuracy=f"{accuracy:.4f}")
+            progress.update(1)
 
-        instruction = data.get('instruction')
-
-        outputs = evaluate(instruction)
-        label = data.get('answer')
-        flag = False
-        if dataset_name.lower() in ['aqua']:
-            predict = extract_answer_letter(outputs)
-            if label == predict:
-                correct += 1
-                flag = True
-        else:
-            if isinstance(label, str):
-                label = float(label)
-            predict = extract_answer_number(dataset_name, outputs)
-            if abs(label - predict) <= miss:
-                correct += 1
-                flag = True
-        new_data = copy.deepcopy(data)
-        new_data['output_pred'] = outputs
-        new_data['pred'] = predict
-        new_data['flag'] = flag
-        new_data['idx'] = idx
-        new_data['dataset'] = dataset_name
-        new_data['total'] = total
-        _append_eval_progress(progress_path, new_data)
-        if verbose:
-            print(' ')
-            print('---------------')
-            print(outputs)
-            print('prediction:', predict)
-            print('label:', label)
-            print('---------------')
-
-        completed_count += 1
-        accuracy = correct / completed_count
-
-        print(f'\rtest:{completed_count}/{total} | accuracy {correct}  {accuracy}')
-        pbar.update(1)
-    pbar.close()
-    print('\n')
-    print('test finished')
-
-    return accuracy
+    return correct / total if total else float("nan")
 
 
-def _load_eval_progress(progress_path, total):
+def _load_eval_progress(progress_path: Optional[str], total: int) -> dict[int, dict]:
     completed = {}
     if not progress_path or not os.path.exists(progress_path):
         return completed
-    with open(progress_path, "r") as f:
-        for line in f:
-            if not line.strip():
-                continue
+    with open(progress_path, "r") as progress_file:
+        for line in progress_file:
             try:
                 row = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            idx = row.get("idx")
-            if not isinstance(idx, int) or idx < 0 or idx >= total:
-                continue
-            if "flag" not in row:
-                continue
-            completed[idx] = row
+            index = row.get("idx")
+            if isinstance(index, int) and 0 <= index < total and "flag" in row:
+                completed[index] = row
     return completed
 
 
-def _append_eval_progress(progress_path, row):
+def _append_eval_progress(progress_path: Optional[str], row: dict) -> None:
     if not progress_path:
         return
-    os.makedirs(os.path.dirname(progress_path), exist_ok=True)
-    prefix = ""
-    if os.path.exists(progress_path) and os.path.getsize(progress_path) > 0:
-        with open(progress_path, "rb") as f:
-            f.seek(-1, os.SEEK_END)
-            if f.read(1) != b"\n":
-                prefix = "\n"
-    with open(progress_path, "a") as f:
-        f.write(prefix + json.dumps(row, sort_keys=True) + "\n")
-        f.flush()
-        os.fsync(f.fileno())
+    directory = os.path.dirname(progress_path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    with open(progress_path, "a") as progress_file:
+        progress_file.write(json.dumps(row, sort_keys=True) + "\n")
+        progress_file.flush()
 
 
-def load_model_and_eval(dataset_name, model_name, adapter, base_model, lora_weights, load_8bit, target_modules, r) -> float:
-    tokenizer, model = load_model(base_model, model_name, lora_weights, load_8bit, adapter, target_modules, r)
-
-    return eval_model(dataset_name, model, tokenizer)
-
-
-def create_dir(dir_path):
-    if not os.path.exists(dir_path):
-        os.mkdir(dir_path)
-    return
-
-
-def generate_prompt(instruction, input=None):
-    if input:
+def generate_prompt(instruction: str, input_text: Optional[str] = None) -> str:
+    if input_text:
         return f"""Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.
 
                 ### Instruction:
                 {instruction}
 
                 ### Input:
-                {input}
+                {input_text}
 
                 ### Response:
-                """  # noqa: E501
-    else:
-        return f"""Below is an instruction that describes a task. Write a response that appropriately completes the request. 
+                """
+    return f"""Below is an instruction that describes a task. Write a response that appropriately completes the request.
 
                 ### Instruction:
                 {instruction}
 
                 ### Response:
-                """  # noqa: E501
+                """
 
 
-def load_data(dataset) -> list:
-    """
-    read data from dataset file
-    Args:
-        dataset:
-
-    Returns: list
-
-    """
-    file_path = f'dataset/{dataset}/test.json'
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"can not find dataset file : {file_path}")
-    json_data = json.load(open(file_path, 'r'))
-    return json_data
+def load_data(dataset: str, dataset_dir: Optional[str] = None) -> list[dict]:
+    dataset_dir = dataset_dir or os.path.join(os.path.dirname(os.path.abspath(__file__)), "dataset")
+    path = os.path.join(dataset_dir, dataset, "test.json")
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Dataset file not found: {path}")
+    with open(path, "r") as dataset_file:
+        return json.load(dataset_file)
 
 
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', choices=['AddSub', 'MultiArith', 'SingleEq', 'gsm8k', 'AQuA', 'SVAMP'],
-                        required=True)
-    parser.add_argument('--model_name', choices=['LLaMA-7B', "LLaMA-13B",'BLOOM-7B', 'GPT-j-6B', 'LLaMA-3-8B', 'LLaMA-3.1-8B', 'LLaMA-3.2-1B'], required=True)
-    parser.add_argument('--adapter', choices=['lora', 'AdapterP', 'AdapterH', 'Parallel', 'no', 'orig', 'super', 'supra'],
-                        required=True)
-    parser.add_argument('--base_model', required=True)
-    parser.add_argument('--lora_weights', required=True)
-    parser.add_argument('--load_8bit', action='store_true', default=False)
-
-    parser.add_argument('--debug', action='store_true', default=False)
-
-    # TODO rewrite it so that one don't have to pass these args
-    parser.add_argument('--target_modules', nargs='+', default=["q_proj", "k_proj", "v_proj", "up_proj", "down_proj"])
-
-    parser.add_argument('--r', default=8)
-
-
-    return parser.parse_args()
-
-
-def load_model(base_model, model_name, lora_weights, load_8bit, adapter, target_modules, r) -> tuple:
-    """
-    load tuned model
-    Args:
-        base_model, model_name, lora_weights, load_8bit, adapter, target_modules, sparse_rate
-
-    Returns:
-        tuple(tokenizer, model)
-    """
-    if not base_model:
-        raise ValueError(f'can not find base model name by the value: {model_name}')
-    if not lora_weights:
-        raise ValueError(f'can not find lora weight, the value is: {lora_weights}')
-
-    # if "LLaMA" in args.model:
-    #     tokenizer = LlamaTokenizer.from_pretrained(base_model)
-    # else:
-    tokenizer = AutoTokenizer.from_pretrained(base_model)
-    tokenizer.padding_side = "left"
-    tokenizer.pad_token_id = (
-        0  # unk. we want this to be different from the eos token
-    )
-    if device == "cuda":
-        if adapter != "no":
-            model = AutoModelForCausalLM.from_pretrained(
-                base_model,
-                load_in_8bit=load_8bit,
-                torch_dtype=torch.float16,
-                device_map="auto",
-                trust_remote_code=True,
-            )  # fix zwq
-            if adapter not in ["orig", "super", "supra"]:
-                model = PeftModel.from_pretrained(
-                    model,
-                    lora_weights,
-                    torch_dtype=torch.float16,
-                    device_map={"": 0}
-                )
-            elif adapter == "super":
-                # TODO rewrite, for now it is just copypaste from `finetune.py`
-                # (requires the same input arguments as training)
-                from dense_plus_sparse_linear import get_dense_plus_sparse_model
-                from safetensors.torch import load_file
-                import glob
-                print(model)
-                model = get_dense_plus_sparse_model(
-                    model,
-                    target_modules_list=target_modules,
-                    r=r,
-                    indices_choice="random",
-                )
-                print(model)
-
-                def load_safetensors_model(model_path):
-                    if os.path.isfile(f"{model_path}"):
-                        state_dict = load_file(f"{model_path}")
-                        return state_dict
-
-                    pattern = os.path.join(os.path.dirname(model_path), "model-*-of-*.safetensors")
-                    print('\n' * 3)
-                    print(pattern)
-                    print('\n' * 3)
-                    shard_files = sorted(glob.glob(pattern))
-                    if not shard_files:
-                        raise FileNotFoundError(f"No safetensors file or shards found for base path: {model_path}")
-
-                    print(f"Found {len(shard_files)} shard files:")
-                    for shard in shard_files:
-                        print("  ", shard)
-
-                    state_dict = {}
-                    for shard in shard_files:
-                        shard_state = load_file(shard)
-                        state_dict.update(shard_state)
-
-                    return state_dict
-
-                state_dict = load_safetensors_model(f"{lora_weights}/model.safetensors")
-                model.load_state_dict(state_dict, strict=False)
-            elif adapter == "supra":
-                from dense_plus_sparse_linear_plus_lora import get_dense_plus_sparse_plus_lora_model
-                from safetensors.torch import load_file
-                import glob
-                print(model)
-                model = get_dense_plus_sparse_plus_lora_model(
-                    model,
-                    target_modules_list=target_modules,
-                    r_lora=r//2,
-                    r_super=r//2,
-                    indices_choice="random",
-                )
-                print(model)
-
-                def load_safetensors_model(model_path):
-                    if os.path.isfile(f"{model_path}"):
-                        state_dict = load_file(f"{model_path}")
-                        return state_dict
-
-                    pattern = os.path.join(os.path.dirname(model_path), "model-*-of-*.safetensors")
-                    print('\n' * 3)
-                    print(pattern)
-                    print('\n' * 3)
-                    shard_files = sorted(glob.glob(pattern))
-                    if not shard_files:
-                        raise FileNotFoundError(f"No safetensors file or shards found for base path: {model_path}")
-
-                    print(f"Found {len(shard_files)} shard files:")
-                    for shard in shard_files:
-                        print("  ", shard)
-
-                    state_dict = {}
-                    for shard in shard_files:
-                        shard_state = load_file(shard)
-                        state_dict.update(shard_state)
-
-                    return state_dict
-
-                state_dict = load_safetensors_model(f"{lora_weights}/model.safetensors")
-                model.load_state_dict(state_dict, strict=False)
-
-        else:
-            model = AutoModelForCausalLM.from_pretrained(
-                lora_weights,
-                local_files_only=True,
-                # load_in_8bit=load_8bit,
-                torch_dtype=torch.float16,
-                device_map="auto",
-                trust_remote_code=True,
-            )
-    elif device == "mps":
-        model = AutoModelForCausalLM.from_pretrained(
-            base_model,
-            device_map={"": device},
-            torch_dtype=torch.float16,
-        )
-        model = PeftModel.from_pretrained(
-            model,
-            lora_weights,
-            device_map={"": device},
-            torch_dtype=torch.float16,
-        )
-    else:
-        model = AutoModelForCausalLM.from_pretrained(
-            base_model, device_map={"": device}, low_cpu_mem_usage=True
-        )
-        model = PeftModel.from_pretrained(
-            model,
-            lora_weights,
-            device_map={"": device},
-        )
-
-        # unwind broken decapoda-research config
-        model.config.pad_token_id = tokenizer.pad_token_id = 0  # unk
-        model.config.bos_token_id = 1
-        model.config.eos_token_id = 2
-
-        if not load_8bit:
-            model.half()  # seems to fix bugs for some users.
-
-        model.eval()
-        if torch.__version__ >= "2" and sys.platform != "win32":
-            model = torch.compile(model)
-
-    return tokenizer, model
-
-
-def load_instruction(args) -> str:
-    instruction = ''
-    if not instruction:
-        raise ValueError('instruct not initialized')
-    return instruction
-
-
-def extract_answer_number(dataset_name, sentence: str) -> float:
-    if dataset_name.lower() in ["multiarith", "addsub", "singleeq", "gsm8k", "svamp"]:
-        sentence = sentence.replace(',', '')
-        pred = [s for s in re.findall(r'-?\d+\.?\d*', sentence)]
-        if not pred:
-            return float('inf')
-        pred_answer = float(pred[-1])
-    else:
-        raise NotImplementedError(' not support dataset: {}'.format(dataset_name))
-    if isinstance(pred_answer, str):
-        try:
-            pred_answer = float(pred_answer)
-        except ValueError as e:
-            pred_answer = float('inf')
-    return pred_answer
+def extract_answer_number(dataset_name: str, sentence: str) -> float:
+    if dataset_name.lower() not in {"multiarith", "addsub", "singleeq", "gsm8k", "svamp"}:
+        raise NotImplementedError(f"Unsupported numeric benchmark: {dataset_name}")
+    matches = re.findall(r"-?\d+\.?\d*", sentence.replace(",", ""))
+    return float(matches[-1]) if matches else float("inf")
 
 
 def extract_answer_letter(sentence: str) -> str:
-    sentence_ = sentence.strip()
-    pred_answers = re.findall(r'A|B|C|D|E', sentence_)
-    if pred_answers:
-        if not pred_answers:
-            return ''
-        return pred_answers[0]
-    else:
-        return ''
-
-
-if __name__ == "__main__":
-    args = parse_args()
-
-    eval_model(args.dataset, args.model_name, args.adapter, args.base_model, args.lora_weights, args.load_8bit, args.debug, args.target_modules, args.r)
+    matches = re.findall(r"A|B|C|D|E", sentence.strip())
+    return matches[0] if matches else ""

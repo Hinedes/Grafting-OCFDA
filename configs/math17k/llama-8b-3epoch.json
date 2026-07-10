@@ -1,0 +1,18 @@
+{
+  "models": "meta-llama/Meta-Llama-3-8B",
+  "methods": "base,full,lora,rosa,sift-topk,sift-rand,super-rand,super-wanda,super-wanda-bottom,magnitude-topk,magnitude-bottomk,supra-0.3,supra-0.5,supra-0.8,supra-0.3-bottom,supra-0.5-bottom,supra-0.8-bottom,supra-magnitude-0.3,supra-magnitude-0.5,supra-magnitude-0.8",
+  "lora_rs": "8",
+  "lrs": "5e-5,1e-4,5e-4,1e-3,5e-3,1e-2,5e-2,1e-1",
+  "seeds": "0",
+  "num_epochs": 3,
+  "batch_size": 16,
+  "micro_batch_size": 16,
+  "cutoff_len": 256,
+  "val_set_size": 120,
+  "warmup_steps": 100,
+  "calibration_data": "c4",
+  "calibration_nsamples": 128,
+  "calibration_seed": 228,
+  "bf16": true,
+  "eval_all_lrs": false
+}

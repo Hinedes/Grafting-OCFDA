@@ -9,18 +9,32 @@ from typing import Dict, Iterable, List
 
 import torch
 
-from math_experiment_tables import (
-    FULL_LLAMA_TARGET_MODULES,
-    RunSpec,
-    build_budget_plan,
-    collect_trainable_param_report,
-    parse_csv_list,
-    print_environment,
-    print_spec_header,
-    set_seed,
-    train_one_run,
-)
-from training_curve_utils import append_jsonl
+try:
+    from .math_experiment_tables import (
+        FULL_LLAMA_TARGET_MODULES,
+        RunSpec,
+        build_budget_plan,
+        collect_trainable_param_report,
+        parse_csv_list,
+        print_environment,
+        print_spec_header,
+        set_seed,
+        train_one_run,
+    )
+    from .training_curve_utils import append_jsonl
+except ImportError:
+    from math_experiment_tables import (
+        FULL_LLAMA_TARGET_MODULES,
+        RunSpec,
+        build_budget_plan,
+        collect_trainable_param_report,
+        parse_csv_list,
+        print_environment,
+        print_spec_header,
+        set_seed,
+        train_one_run,
+    )
+    from training_curve_utils import append_jsonl
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -253,10 +267,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lora_rs", default="8")
     parser.add_argument("--seeds", default="0")
     parser.add_argument("--target_modules", default=",".join(FULL_LLAMA_TARGET_MODULES))
-    parser.add_argument("--train_data", default="ft-training_set/math_10k.json")
+    parser.add_argument(
+        "--train_data",
+        default=os.path.join(SCRIPT_DIR, "ft-training_set", "math_17k.json"),
+    )
     parser.add_argument("--calibration_data", default="c4")
     parser.add_argument("--calibration_nsamples", type=int, default=128)
     parser.add_argument("--calibration_seed", type=int, default=228)
+    parser.add_argument("--full_ft_checkpoint", default="")
     parser.add_argument("--out_dir", default="out_optimization_curves")
     parser.add_argument("--checkpoint_dir", default="checkpoints_optimization_curves")
     parser.add_argument("--batch_size", type=int, default=16)
@@ -275,6 +293,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bf16", action="store_true")
     parser.add_argument("--sparse_rate_override", type=float, default=None)
     parser.add_argument("--rosa_lora_budget_ratio", type=float, default=0.5)
+    parser.add_argument("--rosa_schedule", default="wl64")
+    parser.add_argument("--rosa_spa_num_grads", type=int, default=1)
+    parser.add_argument("--rosa_dtype", default="bf16")
     parser.add_argument("--budget_tolerance_pct", type=float, default=3.0)
     parser.add_argument("--save_adapters", action="store_true")
     parser.add_argument("--only_missing", action="store_true", default=True)

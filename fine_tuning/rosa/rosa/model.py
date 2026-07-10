@@ -1,4 +1,5 @@
 # coding=utf-8
+# Modified for integration with the Super-Tuning experiment pipeline.
 # Copyright 2023-present the HuggingFace Inc. team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -142,7 +143,7 @@ class RosaModel(BaseTuner):
 
         # Regexp matching - Find key which matches current target_name in patterns provided
         pattern_keys = list(chain(rosa_config.rank_pattern.keys(), rosa_config.density_pattern.keys(), rosa_config.alpha_pattern.keys()))
-        target_name_key = next(filter(lambda key: re.match(f".*\.{key}$", current_key), pattern_keys), current_key)
+        target_name_key = next(filter(lambda key: re.match(rf".*\.{key}$", current_key), pattern_keys), current_key)
         r = rosa_config.rank_pattern.get(target_name_key, rosa_config.r)
         d = rosa_config.density_pattern.get(target_name_key, rosa_config.d)
         alpha = rosa_config.alpha_pattern.get(target_name_key, rosa_config.lora_alpha)

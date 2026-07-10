@@ -7,7 +7,10 @@ import sys
 import time
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from math_experiment_tables import DEFAULT_METHODS, MATH_BENCHMARKS, parse_csv_list, save_tables
+try:
+    from .math_experiment_tables import DEFAULT_METHODS, MATH_BENCHMARKS, parse_csv_list, save_tables
+except ImportError:
+    from math_experiment_tables import DEFAULT_METHODS, MATH_BENCHMARKS, parse_csv_list, save_tables
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -65,7 +68,6 @@ def launch_job(command: List[str], gpu: str, env: dict, log_path: str) -> Tuple[
     print("Launching on GPU", gpu, ":", " ".join(command))
     process = subprocess.Popen(
         command,
-        cwd=SCRIPT_DIR,
         env=job_env,
         stdout=log_file,
         stderr=subprocess.STDOUT,
@@ -111,11 +113,9 @@ def parse_args() -> argparse.Namespace:
         allow_abbrev=False,
     )
     parser.add_argument("--gpus", default="0,1,2,3")
-    parser.add_argument(
-        "--methods",
-        default=DEFAULT_METHODS,
-    )
-    parser.add_argument("--datasets", default=",".join(MATH_BENCHMARKS))
+    parser.add_argument("--config", default="", help="JSON experiment preset passed to each method worker.")
+    parser.add_argument("--methods", default=None)
+    parser.add_argument("--datasets", default=None)
     parser.add_argument("--base_out_dir", default="out_math_experiments_parallel")
     parser.add_argument("--base_checkpoint_dir", default="checkpoints_math_parallel")
     parser.add_argument("--script", default=os.path.join(SCRIPT_DIR, "math_experiment_tables.py"))
@@ -132,6 +132,15 @@ def parse_args() -> argparse.Namespace:
             + "; pass only shared experiment options through to math_experiment_tables.py."
         )
     args.passthrough = passthrough
+
+    config = {}
+    if args.config:
+        with open(args.config, "r") as config_file:
+            config = json.load(config_file)
+    if args.methods is None:
+        args.methods = config.get("methods", DEFAULT_METHODS)
+    if args.datasets is None:
+        args.datasets = config.get("datasets", ",".join(MATH_BENCHMARKS))
     return args
 
 
@@ -164,6 +173,7 @@ def main() -> None:
                 command = [
                     args.python,
                     args.script,
+                    *(["--config", args.config] if args.config else []),
                     "--methods",
                     method,
                     "--datasets",

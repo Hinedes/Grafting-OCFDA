@@ -1,3 +1,4 @@
+# Modified for integration with the Super-Tuning experiment pipeline.
 import torch
 from torch.autograd.function import once_differentiable
 from .sparse_ops import spmm, sddmm, csr_transpose
@@ -7,7 +8,7 @@ class SpMMFunction(torch.autograd.Function):
     returns the grad with respect to A_val and B.
     """
     @staticmethod
-    @torch.cuda.amp.custom_fwd
+    @torch.amp.custom_fwd(device_type="cuda")
     def forward(ctx, A_val, A_row_offsets, A_row_indices, A_col_indices, B, M, AT_val, AT_row_offsets, AT_row_indices, AT_col_indices):
         ctx.save_for_backward(A_val, A_row_offsets, A_row_indices, A_col_indices, B, AT_val, AT_row_offsets, AT_row_indices, AT_col_indices)
         C = spmm(A_val, A_row_offsets, A_row_indices, A_col_indices, B, M)
@@ -15,7 +16,7 @@ class SpMMFunction(torch.autograd.Function):
 
     @staticmethod
     @once_differentiable
-    @torch.cuda.amp.custom_bwd
+    @torch.amp.custom_bwd(device_type="cuda")
     def backward(ctx, dLdC):
         # dLdA = dLdC.B^T
         # dLdB = A^T.dLdC
@@ -37,7 +38,7 @@ class SpMMTFunction(torch.autograd.Function):
     returns the grad with respect to AT_val and B.
     """
     @staticmethod
-    @torch.cuda.amp.custom_fwd
+    @torch.amp.custom_fwd(device_type="cuda")
     def forward(ctx, AT_val, AT_row_offsets, AT_row_indices, AT_col_indices, B, M, A_val, A_row_offsets, A_row_indices, A_col_indices): # A: (M, K), AT: (K, M)
         if A_val is None:
             A_val, A_row_offsets, A_col_indices = csr_transpose(AT_val, AT_row_offsets, AT_col_indices, B.shape[0], M)
@@ -49,7 +50,7 @@ class SpMMTFunction(torch.autograd.Function):
 
     @staticmethod
     @once_differentiable
-    @torch.cuda.amp.custom_bwd
+    @torch.amp.custom_bwd(device_type="cuda")
     def backward(ctx, dLdC):
         # dLdAT = B.dLdCT
         # dLdB = AT.dLdC

@@ -5,14 +5,15 @@ from typing import Dict, List, Optional
 
 import torch
 import torch.nn as nn
+
 try:
+    from .rosa.config import RosaConfig
     from .rosa.layer import Linear as RosaLinear
     from .rosa.layer import RosaLayer
-    from .rosa.config import RosaConfig
 except ImportError:
+    from rosa.config import RosaConfig
     from rosa.layer import Linear as RosaLinear
     from rosa.layer import RosaLayer
-    from rosa.config import RosaConfig
 
 
 def _find_mask(masks: Dict[str, torch.Tensor], target_key: str) -> Optional[torch.Tensor]:
@@ -122,15 +123,4 @@ def get_rosa_model(
 def get_rosa_model_state_dict(model, state_dict=None):
     if state_dict is None:
         state_dict = model.state_dict()
-    return {
-        k: v
-        for k, v in state_dict.items()
-        if any(
-            substr in k
-            for substr in [
-                "spa_mask", "values", "indices",  # sparse part
-                "lora_A", "lora_B",               # low-rank part
-                "scaling"                         # optional: alpha scaling
-            ]
-        )
-    }
+    return {key: value for key, value in state_dict.items() if "rosa_" in key}

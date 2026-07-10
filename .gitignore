@@ -1,11 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+
+# Environments
+.venv/
+venv/
+env/
+
+# Editors and operating systems
+.DS_Store
 .idea/
-loaders_cache
-venv
-/experiments/instruction_finetuning/exp/
-/experiments/out/
-**/__pycache__/
-fine_tuning/experiment/
-fine_tuning/lora-alpaca/
-fine_tuning/out/
-fine_tuning/trained_models/
+.vscode/
+*~
+
+# Hugging Face and calibration caches
+loaders_cache/
+fine_tuning/loaders_cache/
+.cache/
+
+# Experiment tracking
+wandb/
+**/wandb/
+
+# Training and evaluation outputs
 checkpoints/
+checkpoints_*/
+fine_tuning/checkpoints/
+fine_tuning/checkpoints_*/
+out/
+out_*/
+fine_tuning/out/
+fine_tuning/out_*/
+runs/
+results/
+trained_models/
+fine_tuning/trained_models/
+
+# Local analysis artifacts
+fine_tuning/result/
+fine_tuning/wanda_first_block_visualizations/

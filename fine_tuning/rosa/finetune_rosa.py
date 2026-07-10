@@ -1,74 +1,32 @@
-# Monkey patching to force transformers ignore peft library 
-# (for yandex infrastructure; in regular env one can just uninstall peft)
-
-import importlib.util
-
-original_find_spec = importlib.util.find_spec
-
-
-def custom_find_spec(name, *args, **kwargs):
-    if name == 'peft':
-        return None
-    return original_find_spec(name, *args, **kwargs)
-
-
-importlib.util.find_spec = custom_find_spec
-
+import json
 import os
 import sys
-from typing import List
+from importlib.metadata import version
+from pathlib import Path
+from typing import List, Optional
 
 import fire
 import torch
-import torch.nn as nn
 import transformers
 from datasets import load_dataset
-from typing import List, Optional, Union
-from importlib.metadata import version
-
-import sys
-import os
-
-from transformers import AutoModelForCausalLM, AutoTokenizer, LlamaTokenizer, AutoModel, Trainer  # noqa: F402
+from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer
 from transformers.trainer_utils import get_last_checkpoint
 
-"""
-Unused imports:
-import torch.nn as nn
-import bitsandbytes as bnb
-"""
-
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-PEFT_PATH = os.path.abspath(os.path.join(os.getcwd(), "peft/src/"))
-
-sys.path.insert(0, PEFT_PATH)
-sys.path.insert(1, BASE_DIR)
-
-from peft import (
-    LoraConfig,
-    PrefixTuningConfig,
-    get_peft_model,
-    get_peft_model_state_dict,
-    set_peft_model_state_dict,
-)
+REPO_DIR = Path(__file__).resolve().parents[2]
+if str(REPO_DIR) not in sys.path:
+    sys.path.insert(0, str(REPO_DIR))
 
 try:
-    from .rosa_adapter import get_rosa_model, get_rosa_model_state_dict
     from .rosa.scheduler import RosaScheduler
+    from .rosa_adapter import get_rosa_model, get_rosa_model_state_dict
 except ImportError:
-    from rosa_adapter import get_rosa_model, get_rosa_model_state_dict
     from rosa.scheduler import RosaScheduler
+    from rosa_adapter import get_rosa_model, get_rosa_model_state_dict
 
-from src.super import Super
-
-from nirvana_utils import TrainerNirvana, copy_out_to_snapshot, copy_snapshot_to_out
-
-from SIFT.sift import SIFT
-from dense_plus_sparse_linear import get_dense_plus_sparse_model, get_sparse_dense_model_state_dict
-from dense_plus_sparse_linear_plus_lora import get_dense_plus_sparse_plus_lora_model, \
-    get_sparse_dense_lora_model_state_dict
-from custom_lora import get_custom_lora_model, get_custom_lora_model_state_dict
-from training_curve_utils import TrainingCurveCallback
+try:
+    from ..training_curve_utils import TrainingCurveCallback
+except ImportError:
+    from training_curve_utils import TrainingCurveCallback
 
 
 def compute_sparse_rate(model, target_modules):
@@ -100,6 +58,7 @@ def train(
         output_dir: str = "./lora-alpaca",
         overwrite_output_dir: bool = False,
         adapter_name: str = "lora",
+        method_name: str = "",
         load_8bit: bool = False,
         sparse_rate=0.005962171052631579,
         # training hyperparams
@@ -120,24 +79,12 @@ def train(
         seed=0,
         # rosa hyperparams
         lora_r: int = 8,
-        dynamic_r: bool = False,
-        lora_params_ratio: float = 0.5,
         lora_alpha: int = 16,
         lora_dropout: float = 0.05,
         rosa_schedule: str = "wl64",
         rosa_spa_num_grads: int = 1,
         rosa_dtype: str = "bf16",
-        lora_target_modules: List[str] = None,
-        # bottleneck adapter hyperparams
-        bottleneck_size: int = 256,
-        non_linearity: str = "tanh",
-        adapter_dropout: float = 0.0,
-        use_parallel_adapter: bool = False,
-        use_adapterp: bool = False,
         target_modules: List[str] = ["q_proj", "k_proj", "v_proj", "up_proj", "down_proj"],
-        scaling: Union[float, str] = 1.0,
-        # prefix tuning hyperparams
-        num_virtual_tokens: int = 30,
         # llm hyperparams
         train_on_inputs: bool = True,  # if False, masks out inputs in loss
         group_by_length: bool = False,  # faster, but produces an odd training loss curve
@@ -161,12 +108,10 @@ def train(
         training_curve_path: str = "",
         training_curve_metadata: Optional[dict] = None,
 
-        # SIFT params
-        sparse_exception=[],
-        random_indices=False,
 ):
+    if adapter_name != "rosa":
+        raise ValueError("finetune_rosa.py only supports adapter_name='rosa'.")
     compile = bool(compile)
-    sparse_module = target_modules
     print(
         f"Finetuning model with params:\n"
         f"base_model: {base_model}\n"
@@ -188,16 +133,10 @@ def train(
         f"rosa_schedule: {rosa_schedule}\n"
         f"rosa_spa_num_grads: {rosa_spa_num_grads}\n"
         f"rosa_dtype: {rosa_dtype}\n"
-        f"lora_target_modules: {lora_target_modules}\n"
         f"optimizer_name: {optimizer_name}\n"
-        f"bottleneck_size: {bottleneck_size}\n"
-        f"non_linearity: {non_linearity}\n"
-        f"adapter_dropout: {adapter_dropout}\n"
-        f"use_parallel_adapter: {use_parallel_adapter}\n"
-        f"use_adapterp: {use_adapterp}\n"
         f"train_on_inputs: {train_on_inputs}\n"
-        f"scaling: {scaling}\n"
         f"adapter_name: {adapter_name}\n"
+        f"method_name: {method_name or adapter_name}\n"
         f"target_modules: {target_modules}\n"
         f"group_by_length: {group_by_length}\n"
         f"wandb_project: {wandb_project}\n"
@@ -211,8 +150,6 @@ def train(
         f"warmup_steps: {warmup_steps}\n"
         f"max_steps: {max_steps}\n"
         f"save_model: {save_model}\n"
-        f"sparse_exception: {sparse_exception}\n"
-        f"random_indices: {random_indices}\n"
         f"seed: {seed}\n"
     )
     assert (
@@ -240,7 +177,12 @@ def train(
         os.environ["WANDB_LOG_MODEL"] = wandb_log_model
 
     use_bf16_training = bool(bf16 or rosa_dtype == "bf16")
-    model_dtype = torch.bfloat16 if use_bf16_training else torch.float16
+    if torch.cuda.is_available():
+        model_dtype = torch.bfloat16 if use_bf16_training else torch.float16
+        device_map = {"": int(os.environ.get("LOCAL_RANK", 0))}
+    else:
+        model_dtype = torch.float32
+        device_map = None
 
     if load_8bit:
         model = AutoModelForCausalLM.from_pretrained(
@@ -254,8 +196,8 @@ def train(
         model = AutoModelForCausalLM.from_pretrained(
             base_model,
             load_in_8bit=False,
-            torch_dtype=model_dtype if adapter_name != "sift" else torch.float32,
-            device_map={"": int(os.environ.get("LOCAL_RANK", 0))},
+            torch_dtype=model_dtype,
+            device_map=device_map,
             trust_remote_code=True,
             attn_implementation=attn_implementation
         )
@@ -308,7 +250,6 @@ def train(
                                                                     ]  # could be sped up, probably
         return tokenized_full_prompt
 
-    # model = prepare_model_for_int8_training(model, use_gradient_checkpointing=use_gradient_checkpointing)
     if use_gradient_checkpointing:
         if hasattr(model, "enable_input_require_grads"):
             model.enable_input_require_grads()
@@ -321,26 +262,20 @@ def train(
         model.gradient_checkpointing_enable()
     torch.manual_seed(seed)
 
-    if adapter_name == "rosa":
-        model.seqlen = model.config.max_position_embeddings
-        model = get_rosa_model(
-            model,
-            target_modules=target_modules,
-            r=lora_r,
-            d=sparse_rate,
-            alpha=lora_alpha,
-            dropout=lora_dropout,
-            impl="sp_add",
-            schedule=rosa_schedule,
-            spa_num_grads=rosa_spa_num_grads,
-            rosa_dtype=rosa_dtype,
-        )
-        print('\n' * 3)
-        print(model)
-        print('\n' * 3)
-        rosa_scheduler = RosaScheduler(model)
-    else:
-        rosa_scheduler = None
+    model.seqlen = model.config.max_position_embeddings
+    model = get_rosa_model(
+        model,
+        target_modules=target_modules,
+        r=lora_r,
+        d=sparse_rate,
+        alpha=lora_alpha,
+        dropout=lora_dropout,
+        impl="sp_add",
+        schedule=rosa_schedule,
+        spa_num_grads=rosa_spa_num_grads,
+        rosa_dtype=rosa_dtype,
+    )
+    rosa_scheduler = RosaScheduler(model)
 
     num_trainable, num_non_trainable, sp_rate = compute_sparse_rate(model=model, target_modules=target_modules)
     print("Initial number of parameters (non trainable):", num_non_trainable)
@@ -367,9 +302,8 @@ def train(
     else:
         data = load_dataset(data_path)
 
-    copy_snapshot_to_out(output_dir)
     last_checkpoint = None
-    if (load_from_checkpoints):
+    if load_from_checkpoints:
         if os.path.isdir(output_dir) and not overwrite_output_dir:
             last_checkpoint = get_last_checkpoint(output_dir)
             if last_checkpoint is None and len(os.listdir(output_dir)) > 0:
@@ -402,8 +336,6 @@ def train(
         model.is_parallelizable = True
         model.model_parallel = True
 
-    if not int(os.environ.get("LOCAL_RANK", 0)):
-        ddp_find_unused_parameters = False if ddp and adapter_name not in ["sift"] else True
     trainer_callbacks = [rosa_scheduler] if rosa_scheduler is not None else []
     if training_curve_path:
         trainer_callbacks.append(TrainingCurveCallback(training_curve_path, training_curve_metadata))
@@ -425,14 +357,14 @@ def train(
             fp16=not use_bf16_training,
             bf16=use_bf16_training,
             logging_steps=logging_steps,
-            evaluation_strategy="steps" if val_set_size > 0 else "no",
+            eval_strategy="steps" if val_set_size > 0 else "no",
             save_strategy="steps" if save_model else "no",
             eval_steps=eval_step if val_set_size > 0 else None,
             save_steps=save_step,
             output_dir=output_dir,
             save_total_limit=1,
             load_best_model_at_end=True if val_set_size > 0 and save_model else False,
-            ddp_find_unused_parameters=False if ddp and adapter_name not in ["sift"] else None,
+            ddp_find_unused_parameters=False if ddp else None,
             group_by_length=group_by_length,
             report_to="wandb" if use_wandb else "none",
             run_name=wandb_run_name if use_wandb else None,
@@ -447,38 +379,40 @@ def train(
 
     model.config.use_cache = False
 
-    # if adapter_name not in ["sift"]:
-    # TODO load only adapter
-    # if adapter_name not in ["sift", "super", "supra"]:
-
     get_state_dict_func = get_rosa_model_state_dict
 
-    if "sift" not in adapter_name:
-        old_state_dict = model.state_dict
-        model.state_dict = (
-            lambda self, *_, **__: get_state_dict_func(
-                self, old_state_dict()
-            )
-        ).__get__(model, type(model))
+    old_state_dict = model.state_dict
+    model.state_dict = (
+        lambda self, *_, **__: get_state_dict_func(
+            self, old_state_dict()
+        )
+    ).__get__(model, type(model))
 
-    # if torch.__version__ >= "2" and sys.platform != "win32":
-    #     model = torch.compile(model)
-
-    trainer.train()
+    checkpoint = resume_from_checkpoint
+    if load_from_checkpoints and checkpoint is None:
+        checkpoint = last_checkpoint
+    trainer.train(resume_from_checkpoint=checkpoint)
 
     if save_model and not int(os.environ.get("LOCAL_RANK", 0)):
-        # save pretrained
         model.save_pretrained(output_dir)
-
-        # # some yandex infrastructure logic
-        # os.system(f"rm -rf {output_dir}/checkpoint*")
-        print('\n' * 10)
-        print("copying result to snapshot")
-        print('-' * 20)
-        print("LS OUTPUT_DIR")
-        os.system(f"ls {output_dir}")
-        print('-' * 20)
-        copy_out_to_snapshot(output_dir)
+        tokenizer.save_pretrained(output_dir)
+        metadata = {
+            "format_version": 1,
+            "method": method_name or adapter_name,
+            "adapter_name": "rosa",
+            "base_model": base_model,
+            "target_modules": list(target_modules),
+            "sparse_rate": float(sparse_rate),
+            "lora_r": int(lora_r),
+            "lora_alpha": int(lora_alpha),
+            "lora_dropout": float(lora_dropout),
+            "rosa_schedule": rosa_schedule,
+            "rosa_spa_num_grads": int(rosa_spa_num_grads),
+            "rosa_dtype": rosa_dtype,
+            "bf16": bool(bf16),
+        }
+        with open(os.path.join(output_dir, "supertuning_config.json"), "w") as metadata_file:
+            json.dump(metadata, metadata_file, indent=2, sort_keys=True)
 
     return model, tokenizer
 

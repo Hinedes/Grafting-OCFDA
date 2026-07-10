@@ -6,7 +6,6 @@ import sys
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_DIR = os.path.dirname(SCRIPT_DIR)
 sys.path.insert(0, SCRIPT_DIR)
@@ -19,7 +18,10 @@ from src.mask import prepare_super_mask  # noqa: E402
 def parse_args():
     parser = argparse.ArgumentParser(description="Sanity-check Wanda calibration samples and statistics.")
     parser.add_argument("--model", default="meta-llama/Llama-3.2-1B")
-    parser.add_argument("--calibration_data", default="ft-training_set/math_10k.json")
+    parser.add_argument(
+        "--calibration_data",
+        default=os.path.join(SCRIPT_DIR, "ft-training_set", "math_17k.json"),
+    )
     parser.add_argument("--nsamples", type=int, default=16)
     parser.add_argument("--seed", type=int, default=228)
     parser.add_argument("--sparse_rate", type=float, default=0.005962171052631579)

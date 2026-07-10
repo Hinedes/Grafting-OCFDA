@@ -3,14 +3,24 @@ import os
 import sys
 from typing import Dict, List, Tuple
 
-from launch_math_methods import (
-    launch_job,
-    merge_results,
-    parse_csv_list,
-    safe_name,
-    stop_running_jobs,
-    wait_for_slot,
-)
+try:
+    from .launch_math_methods import (
+        launch_job,
+        merge_results,
+        parse_csv_list,
+        safe_name,
+        stop_running_jobs,
+        wait_for_slot,
+    )
+except ImportError:
+    from launch_math_methods import (
+        launch_job,
+        merge_results,
+        parse_csv_list,
+        safe_name,
+        stop_running_jobs,
+        wait_for_slot,
+    )
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))

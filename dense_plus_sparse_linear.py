@@ -5,7 +5,6 @@ import time
 import torch
 import torch.nn as nn
 
-from src.datasets_loader import get_loaders
 from src.layerwrapper import WrappedGPT
 from src.mask import find_layers, get_all_blocks, prepare_super_mask
 
@@ -19,11 +18,10 @@ def random_sparse_indices(num_elements: int, train_num: int, device) -> torch.Te
     selected = torch.empty(0, dtype=torch.int64, device=device)
     while selected.numel() < train_num:
         remaining = train_num - selected.numel()
-        sample_count = min(num_elements, max(remaining + remaining // 10 + 16, remaining))
-        sample = torch.randint(0, num_elements, (sample_count,), dtype=torch.int64, device=device)
+        sample = torch.randint(0, num_elements, (remaining,), dtype=torch.int64, device=device)
         selected = torch.unique(torch.cat([selected, sample]))
 
-    return selected[:train_num].to(dtype=torch.int32)
+    return selected.to(dtype=torch.int32)
 
 
 def parse_super_hybrid_beta(indices_choice: str) -> float:
@@ -224,6 +222,8 @@ def prepare_full_delta_wanda_mask(
         calibration_nsamples: int,
         calibration_seed: int,
 ) -> None:
+    from src.datasets_loader import get_loaders
+
     if tokenizer is None:
         raise ValueError("full-delta Wanda masks require tokenizer for calibration activations.")
 

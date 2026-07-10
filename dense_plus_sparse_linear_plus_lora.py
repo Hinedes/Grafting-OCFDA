@@ -1,7 +1,8 @@
-import torch
-import torch.nn as nn
 import math
 import time
+
+import torch
+import torch.nn as nn
 
 from dense_plus_sparse_linear import DensePlusSparseLinear, random_sparse_indices, select_magnitude_indices
 from src.mask import prepare_super_mask

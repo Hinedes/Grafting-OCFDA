@@ -1,7 +1,0 @@
-{"time":"2025-02-02T20:15:46.429621387+03:00","level":"INFO","msg":"stream: starting","core version":"0.19.4","symlink path":"/home/ilini/llm_fine_tuning/SIFT/exp/instruction_finetuning/wandb/run-20250202_201546-e37kcazp/logs/debug-core.log"}
-{"time":"2025-02-02T20:15:46.550955373+03:00","level":"INFO","msg":"created new stream","id":"e37kcazp"}
-{"time":"2025-02-02T20:15:46.55101867+03:00","level":"INFO","msg":"stream: started","id":"e37kcazp"}
-{"time":"2025-02-02T20:15:46.551062507+03:00","level":"INFO","msg":"writer: Do: started","stream_id":"e37kcazp"}
-{"time":"2025-02-02T20:15:46.55104579+03:00","level":"INFO","msg":"handler: started","stream_id":"e37kcazp"}
-{"time":"2025-02-02T20:15:46.551068583+03:00","level":"INFO","msg":"sender: started","stream_id":"e37kcazp"}
-{"time":"2025-02-02T20:15:47.713930427+03:00","level":"INFO","msg":"Starting system monitor"}

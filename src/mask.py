@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 
 from src.layerwrapper import WrappedGPT
-from src.datasets_loader import get_loaders
 
 
 def tensor_mask_of_largest_elements(tensor: torch.tensor, k: int) -> torch.tensor:
@@ -90,6 +89,8 @@ def prepare_super_mask(
         metric_order="top",
         hybrid_top_ratio=None,
 ):
+    from src.datasets_loader import get_loaders
+
     if metric_order not in {"top", "bottom", "bottom-structured", "hybrid"}:
         raise ValueError("metric_order must be 'top', 'bottom', 'bottom-structured', or 'hybrid'.")
     if metric_order == "hybrid":

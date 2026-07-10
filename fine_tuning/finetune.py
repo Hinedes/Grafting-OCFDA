@@ -1,69 +1,34 @@
-# Monkey patching to force transformers ignore peft library 
-# (for yandex infrastructure; in regular env one can just uninstall peft)
+# Adapted from tloen/alpaca-lora's Apache-2.0-licensed training script.
+# Modified for Super-Tuning's sparse adapters and Math17K experiment pipeline.
 
-import importlib.util
-
-original_find_spec = importlib.util.find_spec
-
-
-def custom_find_spec(name, *args, **kwargs):
-    if name == 'peft':
-        return None
-    return original_find_spec(name, *args, **kwargs)
-
-
-importlib.util.find_spec = custom_find_spec
-
+import json
 import os
-import sys
-from typing import List
+from importlib.metadata import version
+from typing import List, Optional
 
 import fire
 import torch
-import torch.nn as nn
 import transformers
 from datasets import load_dataset
-from typing import List, Optional, Union
-from importlib.metadata import version
-
-import sys
-import os
-
-from transformers import AutoModelForCausalLM, AutoTokenizer, LlamaTokenizer, AutoModel, Trainer  # noqa: F402
+from peft import LoraConfig, get_peft_model, get_peft_model_state_dict
+from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer
 from transformers.trainer_utils import get_last_checkpoint
 
-"""
-Unused imports:
-import torch.nn as nn
-import bitsandbytes as bnb
-"""
-
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PEFT_PATH = os.path.abspath(os.path.join(os.getcwd(), "peft/src/"))
-
-sys.path.insert(0, PEFT_PATH)
-sys.path.insert(1, BASE_DIR)
-
-from peft import (
-    LoraConfig,
-    BottleneckConfig,
-    PrefixTuningConfig,
-    get_peft_model,
-    get_peft_model_state_dict,
-    prepare_model_for_int8_training,
-    set_peft_model_state_dict,
+from dense_plus_sparse_linear import get_dense_plus_sparse_model, get_sparse_dense_model_state_dict
+from dense_plus_sparse_linear_plus_lora import (
+    get_dense_plus_sparse_plus_lora_model,
+    get_sparse_dense_lora_model_state_dict,
 )
 
-from src.super import Super
+try:
+    from .baselines import SIFT
+    from .training_curve_utils import TrainingCurveCallback
+except ImportError:
+    from baselines import SIFT
+    from training_curve_utils import TrainingCurveCallback
 
-from nirvana_utils import TrainerNirvana, copy_out_to_snapshot, copy_snapshot_to_out
 
-from SIFT.sift import SIFT
-from dense_plus_sparse_linear import get_dense_plus_sparse_model, get_sparse_dense_model_state_dict
-from dense_plus_sparse_linear_plus_lora import get_dense_plus_sparse_plus_lora_model, \
-    get_sparse_dense_lora_model_state_dict
-from custom_lora import get_custom_lora_model, get_custom_lora_model_state_dict
-from training_curve_utils import TrainingCurveCallback
+SUPPORTED_ADAPTERS = {"lora", "sift", "super", "supra", "no"}
 
 
 def compute_sparse_rate(model, target_modules):
@@ -95,6 +60,7 @@ def train(
         output_dir: str = "./lora-alpaca",
         overwrite_output_dir: bool = False,
         adapter_name: str = "lora",
+        method_name: str = "",
         load_8bit: bool = False,
         sparse_rate=0.005962171052631579,
         calibration_data: str = "c4",
@@ -118,21 +84,10 @@ def train(
         seed=0,
         # lora hyperparams
         lora_r: int = 8,
-        dynamic_r: bool = False,
         lora_params_ratio: float = 0.5,
         lora_alpha: int = 16,
         lora_dropout: float = 0.05,
-        lora_target_modules: List[str] = None,
-        # bottleneck adapter hyperparams
-        bottleneck_size: int = 256,
-        non_linearity: str = "tanh",
-        adapter_dropout: float = 0.0,
-        use_parallel_adapter: bool = False,
-        use_adapterp: bool = False,
         target_modules: List[str] = ["q_proj", "k_proj", "v_proj", "up_proj", "down_proj"],
-        scaling: Union[float, str] = 1.0,
-        # prefix tuning hyperparams
-        num_virtual_tokens: int = 30,
         # llm hyperparams
         train_on_inputs: bool = True,  # if False, masks out inputs in loss
         group_by_length: bool = False,  # faster, but produces an odd training loss curve
@@ -162,6 +117,9 @@ def train(
         random_indices=False,
         mask_choice=None,
 ):
+    if adapter_name not in SUPPORTED_ADAPTERS:
+        supported = ", ".join(sorted(SUPPORTED_ADAPTERS))
+        raise ValueError(f"Unsupported adapter_name={adapter_name!r}. Choose one of: {supported}.")
     if mask_choice is None:
         mask_choice = "random" if random_indices else "super"
     if not (
@@ -200,16 +158,10 @@ def train(
         f"lora_r: {lora_r}\n"
         f"lora_alpha: {lora_alpha}\n"
         f"lora_dropout: {lora_dropout}\n"
-        f"lora_target_modules: {lora_target_modules}\n"
         f"optimizer_name: {optimizer_name}\n"
-        f"bottleneck_size: {bottleneck_size}\n"
-        f"non_linearity: {non_linearity}\n"
-        f"adapter_dropout: {adapter_dropout}\n"
-        f"use_parallel_adapter: {use_parallel_adapter}\n"
-        f"use_adapterp: {use_adapterp}\n"
         f"train_on_inputs: {train_on_inputs}\n"
-        f"scaling: {scaling}\n"
         f"adapter_name: {adapter_name}\n"
+        f"method_name: {method_name or adapter_name}\n"
         f"target_modules: {target_modules}\n"
         f"group_by_length: {group_by_length}\n"
         f"wandb_project: {wandb_project}\n"
@@ -256,7 +208,12 @@ def train(
     if len(wandb_log_model) > 0:
         os.environ["WANDB_LOG_MODEL"] = wandb_log_model
 
-    model_dtype = torch.float32 if adapter_name == "sift" else (torch.bfloat16 if bf16 else torch.float16)
+    if not torch.cuda.is_available():
+        model_dtype = torch.float32
+        device_map = None
+    else:
+        model_dtype = torch.float32 if adapter_name == "sift" else (torch.bfloat16 if bf16 else torch.float16)
+        device_map = {"": int(os.environ.get("LOCAL_RANK", 0))}
 
     if load_8bit:
         model = AutoModelForCausalLM.from_pretrained(
@@ -271,7 +228,7 @@ def train(
             base_model,
             load_in_8bit=False,
             torch_dtype=model_dtype,
-            device_map={"": int(os.environ.get("LOCAL_RANK", 0))},
+            device_map=device_map,
             trust_remote_code=True,
             attn_implementation=attn_implementation
         )
@@ -324,7 +281,6 @@ def train(
                                                                     ]  # could be sped up, probably
         return tokenized_full_prompt
 
-    # model = prepare_model_for_int8_training(model, use_gradient_checkpointing=use_gradient_checkpointing)
     if use_gradient_checkpointing:
         if hasattr(model, "enable_input_require_grads"):
             model.enable_input_require_grads()
@@ -345,29 +301,12 @@ def train(
             bias="none",
             task_type="CAUSAL_LM",
         )
-    elif adapter_name == "bottleneck":
-        config = BottleneckConfig(
-            bottleneck_size=bottleneck_size,
-            non_linearity=non_linearity,
-            adapter_dropout=adapter_dropout,
-            use_parallel_adapter=use_parallel_adapter,
-            use_adapterp=use_adapterp,
-            target_modules=target_modules,
-            scaling=scaling,
-            bias="none",
-            task_type="CAUSAL_LM",
-        )
-    elif adapter_name == "prefix-tuning":
-        config = PrefixTuningConfig(
-            num_virtual_tokens=num_virtual_tokens,
-            task_type="CAUSAL_LM",
-        )
     torch.manual_seed(seed)
 
     sift = None
-    if adapter_name not in ["sift", "super", "no", "supra"]:
+    if adapter_name == "lora":
         model = get_peft_model(model, config)
-        model.print_trainable_parameters()  # Be more transparent about the % of trainable params.
+        model.print_trainable_parameters()
     elif adapter_name == "sift":
         sift = SIFT(
             model,
@@ -391,9 +330,6 @@ def train(
             calibration_seed=calibration_seed,
             full_ft_checkpoint=full_ft_checkpoint,
         )
-        print('\n' * 3)
-        print(model)
-        print('\n' * 3)
     elif adapter_name == "supra":
         model.seqlen = model.config.max_position_embeddings
         model = get_dense_plus_sparse_plus_lora_model(
@@ -410,32 +346,8 @@ def train(
             calibration_nsamples=calibration_nsamples,
             calibration_seed=calibration_seed,
         )
-        print('\n' * 3)
-        print(model)
-        print('\n' * 3)
-    elif adapter_name == "custom-lora":
-        model.seqlen = model.config.max_position_embeddings
-        model = get_custom_lora_model(
-            model,
-            r=lora_r,
-            dynamic_r=dynamic_r,
-            sparse_rate=sparse_rate,
-            lora_alpha=lora_alpha,
-            lora_dropout=lora_dropout,
-            target_modules_list=target_modules,
-            tokenizer=tokenizer,
-            exception=sparse_exception,
-        )
-        print('\n' * 3)
-        print(model)
-        print('\n' * 3)
     elif adapter_name == "no":
         pass
-    else:
-        raise ValueError("Incorrect `adapter_name`")
-
-    if adapter_name == "prefix-tuning":
-        model.to('cuda')
 
     num_trainable, num_non_trainable, sp_rate = compute_sparse_rate(model=model, target_modules=target_modules)
     print("Initial number of parameters (non trainable):", num_non_trainable)
@@ -465,9 +377,8 @@ def train(
     else:
         data = load_dataset(data_path)
 
-    copy_snapshot_to_out(output_dir)
     last_checkpoint = None
-    if (load_from_checkpoints):
+    if load_from_checkpoints:
         if os.path.isdir(output_dir) and not overwrite_output_dir:
             last_checkpoint = get_last_checkpoint(output_dir)
             if last_checkpoint is None and len(os.listdir(output_dir)) > 0:
@@ -500,8 +411,6 @@ def train(
         model.is_parallelizable = True
         model.model_parallel = True
 
-    if not int(os.environ.get("LOCAL_RANK", 0)):
-        ddp_find_unused_parameters = False if ddp and adapter_name not in ["sift"] else True
     trainer_callbacks = []
     if training_curve_path:
         trainer_callbacks.append(TrainingCurveCallback(training_curve_path, training_curve_metadata))
@@ -523,7 +432,7 @@ def train(
             fp16=adapter_name != "sift" and not bf16,
             bf16=bf16,
             logging_steps=logging_steps,
-            evaluation_strategy="steps" if val_set_size > 0 else "no",
+            eval_strategy="steps" if val_set_size > 0 else "no",
             save_strategy="steps" if save_model else "no",
             eval_steps=eval_step if val_set_size > 0 else None,
             save_steps=save_step,
@@ -556,10 +465,8 @@ def train(
         get_state_dict_func = get_sparse_dense_model_state_dict
     elif adapter_name == "supra":
         get_state_dict_func = get_sparse_dense_lora_model_state_dict
-    elif adapter_name == "custom-lora":
-        get_state_dict_func = get_custom_lora_model_state_dict
 
-    if adapter_name in ["super", "supra", "custom-lora"]:
+    if adapter_name in ["super", "supra"]:
         old_state_dict = model.state_dict
         model.state_dict = (
             lambda self, *_, **__: get_state_dict_func(
@@ -570,47 +477,41 @@ def train(
     # if torch.__version__ >= "2" and sys.platform != "win32":
     #     model = torch.compile(model)
 
-    '''
-    checkpoint = None
-
-    if load_from_checkpoints:
-        if resume_from_checkpoint is not None:
-            checkpoint = resume_from_checkpoint
-        elif last_checkpoint is not None:
-            checkpoint = last_checkpoint
-            if (not int(os.environ.get("LOCAL_RANK", 0))
-                    and use_wandb):
-                import wandb
-                import json
-                with open(os.path.join(output_dir, "run_metadata.json"), 'r') as f:
-                    run_metadata = json.load(f)
-                wandb.init(
-                    project=run_metadata["project"],
-                    id=run_metadata["run_id"],
-                    name=run_metadata.get("run_name"),
-                    entity=run_metadata.get("entity"),
-                    resume="must"
-                )
-                print(f"Resumed run: {wandb.run.name} (ID: {wandb.run.id})")
-    
+    checkpoint = resume_from_checkpoint
+    if load_from_checkpoints and checkpoint is None:
+        checkpoint = last_checkpoint
     trainer.train(resume_from_checkpoint=checkpoint)
-    '''
-
-    trainer.train()
 
     if save_model and not int(os.environ.get("LOCAL_RANK", 0)):
-        # save pretrained
-        model.save_pretrained(output_dir)
-
-        # # some yandex infrastructure logic
-        # os.system(f"rm -rf {output_dir}/checkpoint*")
-        print('\n' * 10)
-        print("copying result to snapshot")
-        print('-' * 20)
-        print("LS OUTPUT_DIR")
-        os.system(f"ls {output_dir}")
-        print('-' * 20)
-        copy_out_to_snapshot(output_dir)
+        if adapter_name == "sift":
+            dense_state = {
+                key: value
+                for key, value in model.state_dict().items()
+                if not key.startswith("_sift_")
+            }
+            model.save_pretrained(output_dir, state_dict=dense_state)
+        else:
+            model.save_pretrained(output_dir)
+        tokenizer.save_pretrained(output_dir)
+        metadata = {
+            "format_version": 1,
+            "method": method_name or adapter_name,
+            "adapter_name": adapter_name,
+            "base_model": base_model,
+            "target_modules": list(target_modules),
+            "sparse_rate": float(sparse_rate),
+            "mask_choice": mask_choice,
+            "lora_r": int(lora_r),
+            "lora_params_ratio": float(lora_params_ratio),
+            "lora_alpha": int(lora_alpha),
+            "lora_dropout": float(lora_dropout),
+            "calibration_data": calibration_data,
+            "calibration_nsamples": int(calibration_nsamples),
+            "calibration_seed": int(calibration_seed),
+            "bf16": bool(bf16),
+        }
+        with open(os.path.join(output_dir, "supertuning_config.json"), "w") as metadata_file:
+            json.dump(metadata, metadata_file, indent=2, sort_keys=True)
 
     return model, tokenizer
 

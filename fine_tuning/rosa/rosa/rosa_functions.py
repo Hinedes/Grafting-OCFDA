@@ -1,3 +1,4 @@
+# Modified for integration with the Super-Tuning experiment pipeline.
 import torch
 from torch.autograd.function import once_differentiable
 import bitsandbytes as bnb
@@ -38,7 +39,7 @@ class RoSALinearFunction(torch.autograd.Function):
           We simply dequantize it first, and then proceed. 
     """
     @staticmethod
-    @torch.cuda.amp.custom_fwd
+    @torch.amp.custom_fwd(device_type="cuda")
     def forward(ctx, X, W_module, LA, LB, S_val, S_row_offs, S_row_idx, S_col_idx, lora_scaling, lora_dropout_rate, training):
         # assert S_val is not None, 'sp_add implementation of RoSA is suboptimal if there is no sparse adapter, please switch to the spmm implementation.'
 
@@ -83,7 +84,7 @@ class RoSALinearFunction(torch.autograd.Function):
 
     @staticmethod
     @once_differentiable
-    @torch.cuda.amp.custom_bwd
+    @torch.amp.custom_bwd(device_type="cuda")
     def backward(ctx, dO):
         dO = dO.reshape(-1, dO.shape[-1])
         X, orig_W, LA, LB, S_val, S_row_offs, S_row_idx, S_col_idx, D = ctx.saved_tensors

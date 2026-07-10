@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the Super-Tuning paper."
+title: "Super-Tuning: From Activation-Aware Pruning to Sparse Fine-Tuning"
+type: software
+version: 0.1.0
+authors:
+  - family-names: Ilin
+    given-names: Ivan
+  - family-names: Zmushko
+    given-names: Philip
+  - family-names: Richtarik
+    given-names: Peter
+repository-code: "https://github.com/vectozavr/SuperTuning"
+license: MIT
+preferred-citation:
+  type: article
+  title: "Super-Tuning: From Activation-Aware Pruning to Sparse Fine-Tuning"
+  authors:
+    - family-names: Ilin
+      given-names: Ivan
+    - family-names: Zmushko
+      given-names: Philip
+    - family-names: Richtarik
+      given-names: Peter
+  year: 2026

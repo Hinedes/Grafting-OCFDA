@@ -6,53 +6,46 @@ import math
 import os
 import platform
 import shutil
-import sys
 import time
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import torch
 import transformers
 from datasets import load_dataset
-from torch.utils.data import DataLoader
+from peft import LoraConfig, get_peft_model, get_peft_model_state_dict
 from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer
 
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-REPO_DIR = os.path.dirname(SCRIPT_DIR)
-PEFT_PATH = os.path.join(SCRIPT_DIR, "peft", "src")
-
-os.chdir(SCRIPT_DIR)
-sys.path.insert(0, PEFT_PATH)
-sys.path.insert(1, SCRIPT_DIR)
-sys.path.insert(2, REPO_DIR)
-
-from peft import LoraConfig, get_peft_model, get_peft_model_state_dict  # noqa: E402
-
-from dense_plus_sparse_linear import (  # noqa: E402
+from dense_plus_sparse_linear import (
     get_dense_plus_sparse_model,
     get_sparse_dense_model_state_dict,
 )
-from dense_plus_sparse_linear_plus_lora import (  # noqa: E402
+from dense_plus_sparse_linear_plus_lora import (
     get_dense_plus_sparse_plus_lora_model,
     get_sparse_dense_lora_model_state_dict,
 )
-from math_experiment_tables import (  # noqa: E402
-    FULL_LLAMA_TARGET_MODULES,
-    LEGACY_TARGET_MODULES,
-    RunSpec,
-    build_budget_plan,
-    parse_csv_list,
-    parse_method,
-)
-from SIFT.sift import SIFT  # noqa: E402
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 try:
-    from rosa.rosa_adapter import get_rosa_model, get_rosa_model_state_dict  # noqa: E402
-    from rosa.rosa.scheduler import RosaScheduler  # noqa: E402
+    from .baselines import SIFT
+    from .math_experiment_tables import (
+        FULL_LLAMA_TARGET_MODULES,
+        LEGACY_TARGET_MODULES,
+        RunSpec,
+        build_budget_plan,
+        parse_csv_list,
+        parse_method,
+    )
 except ImportError:
-    from fine_tuning.rosa.rosa_adapter import get_rosa_model, get_rosa_model_state_dict  # noqa: E402
-    from fine_tuning.rosa.rosa.scheduler import RosaScheduler  # noqa: E402
-
+    from baselines import SIFT
+    from math_experiment_tables import (
+        FULL_LLAMA_TARGET_MODULES,
+        LEGACY_TARGET_MODULES,
+        RunSpec,
+        build_budget_plan,
+        parse_csv_list,
+        parse_method,
+    )
 
 DEFAULT_METHODS = (
     "full,rosa,sift-topk,lora,super-wanda-bottom,magnitude-bottomk,"
@@ -70,6 +63,16 @@ METHOD_LABELS = {
     "supra-0.8-bottom": "\\algname{Supra} (BottomK, $\\lambda=0.8$)",
     "supra-magnitude-0.3": "\\algname{Supra-Mag} (BottomK, $\\lambda=0.3$)",
 }
+
+
+def import_rosa_components():
+    try:
+        from .rosa.rosa.scheduler import RosaScheduler
+        from .rosa.rosa_adapter import get_rosa_model, get_rosa_model_state_dict
+    except ImportError:
+        from rosa.rosa.scheduler import RosaScheduler
+        from rosa.rosa_adapter import get_rosa_model, get_rosa_model_state_dict
+    return get_rosa_model, get_rosa_model_state_dict, RosaScheduler
 
 
 class ProfilingTrainer(Trainer):
@@ -195,16 +198,12 @@ def get_adapter_state_dict(model, adapter_name: str, sift: Optional[SIFT]) -> Di
     if adapter_name == "supra":
         return {key: value.detach() for key, value in get_sparse_dense_lora_model_state_dict(model).items()}
     if adapter_name == "rosa":
+        _, get_rosa_model_state_dict, _ = import_rosa_components()
         return {key: value.detach() for key, value in get_rosa_model_state_dict(model).items()}
     if adapter_name == "sift":
         if sift is None:
             raise ValueError("SIFT state requested before SIFT wrapper was constructed.")
-        state = {}
-        for name, sparse_param in sift.sparse_mapping.items():
-            safe_name = name.replace(".", "_")
-            state[f"{safe_name}.sparse_values"] = sparse_param.detach()
-            state[f"{safe_name}.sparse_indices"] = sparse_param.idx.detach()
-        return state
+        return sift.adapter_state_dict()
     raise ValueError(f"No adapter state for adapter type: {adapter_name}")
 
 
@@ -376,6 +375,7 @@ def build_model_and_optimizer(
             profile_stats=profile_stats,
         )
     elif adapter_name == "rosa":
+        get_rosa_model, _, RosaScheduler = import_rosa_components()
         model.seqlen = model.config.max_position_embeddings
         model = get_rosa_model(
             model,
@@ -444,7 +444,7 @@ def profile_one(args, spec: RunSpec, target_modules: List[str]) -> dict:
                 fp16=use_fp16_training,
                 bf16=use_bf16_training,
                 logging_steps=args.logging_steps,
-                evaluation_strategy="no",
+                eval_strategy="no",
                 save_strategy="no",
                 output_dir=os.path.join(args.output_dir, "trainer_tmp", spec.run_id),
                 group_by_length=False,
@@ -731,7 +731,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--models", default=DEFAULT_MODELS)
     parser.add_argument("--methods", default=DEFAULT_METHODS)
     parser.add_argument("--output_dir", default="out_efficiency_profile")
-    parser.add_argument("--train_data", default="ft-training_set/math_17k.json")
+    parser.add_argument(
+        "--train_data",
+        default=os.path.join(SCRIPT_DIR, "ft-training_set", "math_17k.json"),
+    )
     parser.add_argument("--calibration_data", default="c4")
     parser.add_argument("--calibration_nsamples", type=int, default=128)
     parser.add_argument("--calibration_seed", type=int, default=228)

@@ -1,14 +1,13 @@
 # Code adapted from https://github.com/IST-DASLab/sparsegpt/blob/master/datautils.py
 
-import numpy as np
-import random
-import torch
-import os
-import json
 import hashlib
+import json
+import os
+import random
 
+import numpy as np
+import torch
 from datasets import load_dataset
-
 
 LOADER_CACHE_VERSION = "v2"
 
