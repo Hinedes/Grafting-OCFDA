@@ -2,13 +2,13 @@
 
 Official implementation of **Super-Tuning: From Activation-Aware Pruning to Sparse Fine-Tuning**.
 
-Super turns pruning scores into fixed sparse fine-tuning supports. For a linear-layer weight (W_{ij}), the Wanda variant ranks coordinates with
+Super turns pruning scores into fixed sparse fine-tuning supports. For a linear-layer weight $W_{ij}$, the Wanda variant ranks coordinates with
 
-\[
+$$
 s_{ij}=|W_{ij}|\lVert X_{j:}\rVert_2,
-\]
+$$
 
-where (X_{j:}) contains calibration activations entering input coordinate (j). Supra combines the resulting sparse update with LoRA under the same rank-equivalent trainable-scalar budget. The repository also provides the paper baselines and the complete Math17K learning-rate selection and evaluation pipeline.
+where $X_{j:}$ contains calibration activations entering input coordinate $j$. Supra combines the resulting sparse update with LoRA under the same rank-equivalent trainable-scalar budget. The repository also provides the paper baselines and the complete Math17K learning-rate selection and evaluation pipeline.
 
 > **Math17K protocol note:** Math17K contains questions from the first 80% of the six packaged benchmark snapshots. The submitted full-snapshot protocol is reproducible, but it is not a held-out evaluation. Use `supertuning-data-audit` and `--dataset_dir` as described under Data for evaluation on disjoint questions.
 
@@ -141,10 +141,10 @@ For Supra, `lambda` is the fraction of the matched scalar budget assigned to the
 
 The runner computes the sparse rate separately for each model from the selected target matrices:
 
-\[
+$$
 \rho = \frac{\sum_l r_0(d_{\mathrm{in}}^{(l)} + d_{\mathrm{out}}^{(l)})}
 {\sum_l d_{\mathrm{in}}^{(l)}d_{\mathrm{out}}^{(l)}}.
-\]
+$$
 
 Super and magnitude baselines receive approximately the same number of trainable scalars as rank-`r0` LoRA. Supra divides this total between LoRA and sparse values, and the runner rejects configurations outside the default 3% budget tolerance.
 
