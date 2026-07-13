@@ -1,5 +1,7 @@
 # Super-Tuning
 
+[![arXiv](https://img.shields.io/badge/arXiv-2607.09287-b31b1b.svg)](https://arxiv.org/abs/2607.09287)
+
 Official implementation of **Super-Tuning: From Activation-Aware Pruning to Sparse Fine-Tuning**.
 
 Super turns pruning scores into fixed sparse fine-tuning supports. For a linear-layer weight $W_{ij}$, the Wanda variant ranks coordinates with
@@ -11,6 +13,10 @@ $$
 where $X_{j:}$ contains calibration activations entering input coordinate $j$. Supra combines the resulting sparse update with LoRA under the same rank-equivalent trainable-scalar budget. The repository also provides the paper baselines and the complete Math17K learning-rate selection and evaluation pipeline.
 
 > **Math17K protocol note:** Math17K contains questions from the first 80% of the six packaged benchmark snapshots. The submitted full-snapshot protocol is reproducible, but it is not a held-out evaluation. Use `supertuning-data-audit` and `--dataset_dir` as described under Data for evaluation on disjoint questions.
+
+## Paper
+
+**Paper:** [Super-Tuning: From Activation-Aware Pruning to Sparse Fine-Tuning](https://arxiv.org/abs/2607.09287)
 
 ## What is included
 
@@ -236,7 +242,16 @@ src/                        Wanda calibration and mask utilities
 
 ## Citation
 
-Please cite the paper when using Super or Supra. A machine-readable citation is available in [`CITATION.cff`](CITATION.cff). The arXiv identifier will be added once it is assigned.
+Please cite the paper when using Super or Supra. A machine-readable citation is available in [`CITATION.cff`](CITATION.cff).
+
+```bibtex
+@article{ilin2026supertuning,
+  title={Super-Tuning: From Activation-Aware Pruning to Sparse Fine-Tuning},
+  author={Ilin, Ivan and Zmushko, Philip and Richt{\'a}rik, Peter},
+  journal={arXiv preprint arXiv:2607.09287},
+  year={2026}
+}
+```
 
 ## License and attribution
 
