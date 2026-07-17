@@ -245,7 +245,7 @@ src/                        Wanda calibration and mask utilities
 Please cite the paper when using Super or Supra. A machine-readable citation is available in [`CITATION.cff`](CITATION.cff).
 
 ```bibtex
-@article{ilin2026supertuning,
+@article{ilin2026super,
   title={Super-Tuning: From Activation-Aware Pruning to Sparse Fine-Tuning},
   author={Ilin, Ivan and Zmushko, Philip and Richt{\'a}rik, Peter},
   journal={arXiv preprint arXiv:2607.09287},
