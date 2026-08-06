@@ -18,6 +18,8 @@ where $X_{j:}$ contains calibration activations entering input coordinate $j$. S
 
 **Paper:** [Super-Tuning: From Activation-Aware Pruning to Sparse Fine-Tuning](https://arxiv.org/abs/2607.09287)
 
+...or you can read my [blog post](https://ivanilin.org/projects/sparse-fine-tuning/) on it.
+
 ## What is included
 
 - Super with Wanda TopK, Wanda BottomK, random, and magnitude supports
