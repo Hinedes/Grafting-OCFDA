@@ -1,7 +1,7 @@
 import os
 
 from fine_tuning.data_integrity import DEFAULT_DATASET_DIR, audit_overlap, write_heldout
-from fine_tuning.evaluate import load_data
+from fine_tuning.evaluate import extract_answer_letter, load_data
 
 REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TRAINING_DIR = os.path.join(REPO_DIR, "fine_tuning", "ft-training_set")
@@ -45,3 +45,8 @@ def test_materialized_math17k_heldout_subsets_are_disjoint(tmp_path) -> None:
     clean_report, _ = audit_overlap(train_path, str(tmp_path))
     assert all(row["overlapping_records"] == 0 for row in clean_report)
     assert len(load_data("MultiArith", dataset_dir=str(tmp_path))) == 109
+
+
+def test_aqua_answer_extraction_prefers_explicit_answer() -> None:
+    assert extract_answer_letter("The options are A, B, C, D, E. Answer: (D)") == "D"
+    assert extract_answer_letter("D") == "D"

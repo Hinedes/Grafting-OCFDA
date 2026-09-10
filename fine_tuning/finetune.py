@@ -3,6 +3,7 @@
 
 import json
 import os
+from hashlib import sha256
 from importlib.metadata import version
 from typing import List, Optional
 
@@ -21,6 +22,34 @@ from dense_plus_sparse_linear_plus_lora import (
 )
 
 try:
+    from .artifacts import sha256_file
+except ImportError:
+    from artifacts import sha256_file
+
+try:
+    from .ocfda import (
+        OCFDA_PROJECTIONS,
+        get_ocfda_model,
+        get_ocfda_model_state_dict,
+        host_tensor_hashes,
+        verify_host_tensor_hashes,
+        verify_ocfda_detach,
+        verify_optimizer_ownership,
+        verify_zero_graft_noop,
+    )
+except ImportError:
+    from ocfda import (
+        OCFDA_PROJECTIONS,
+        get_ocfda_model,
+        get_ocfda_model_state_dict,
+        host_tensor_hashes,
+        verify_host_tensor_hashes,
+        verify_ocfda_detach,
+        verify_optimizer_ownership,
+        verify_zero_graft_noop,
+    )
+
+try:
     from .baselines import SIFT
     from .training_curve_utils import TrainingCurveCallback
 except ImportError:
@@ -28,12 +57,12 @@ except ImportError:
     from training_curve_utils import TrainingCurveCallback
 
 
-SUPPORTED_ADAPTERS = {"lora", "sift", "super", "supra", "no"}
+SUPPORTED_ADAPTERS = {"lora", "sift", "super", "supra", "ocfda", "no"}
 
 
 def compute_sparse_rate(model, target_modules):
     def is_in_target_modules(_name, additional_weights="values"):
-        if additional_weights in _name:
+        if additional_weights in _name or "graft_delta" in _name:
             return True
 
         for item in target_modules:
@@ -67,6 +96,12 @@ def train(
         calibration_nsamples: int = 128,
         calibration_seed: int = 228,
         full_ft_checkpoint: str = "",
+        model_revision: str = "",
+        tokenizer_revision: str = "",
+        support_seed: int = 0,
+        ocfda_geometry: str = "aligned",
+        ocfda_k: int = 57,
+        artifact_manifest_path: str = "",
         # training hyperparams
         batch_size: int = 128,
         micro_batch_size: int = 4,
@@ -120,6 +155,14 @@ def train(
     if adapter_name not in SUPPORTED_ADAPTERS:
         supported = ", ".join(sorted(SUPPORTED_ADAPTERS))
         raise ValueError(f"Unsupported adapter_name={adapter_name!r}. Choose one of: {supported}.")
+    if adapter_name == "ocfda":
+        target_modules = list(OCFDA_PROJECTIONS)
+        if not artifact_manifest_path:
+            raise ValueError("B1 OCFDA requires an artifact manifest")
+        if optimizer_name.lower() != "adamw" or weight_decay != 0.0:
+            raise ValueError("B1 OCFDA fixes AdamW with zero weight decay")
+        if ocfda_k != 57:
+            raise ValueError("B1 OCFDA fixes k=57")
     if mask_choice is None:
         mask_choice = "random" if random_indices else "super"
     if not (
@@ -182,11 +225,34 @@ def train(
         f"calibration_nsamples: {calibration_nsamples}\n"
         f"calibration_seed: {calibration_seed}\n"
         f"full_ft_checkpoint: {full_ft_checkpoint}\n"
+        f"model_revision: {model_revision}\n"
+        f"tokenizer_revision: {tokenizer_revision}\n"
+        f"support_seed: {support_seed}\n"
+        f"ocfda_geometry: {ocfda_geometry}\n"
+        f"ocfda_k: {ocfda_k}\n"
+        f"artifact_manifest_path: {artifact_manifest_path}\n"
         f"seed: {seed}\n"
     )
     assert (
         base_model
     ), "Please specify a --base_model, e.g. --base_model='decapoda-research/llama-7b-hf'"
+    artifact_manifest = None
+    artifact_manifest_sha256 = None
+    if artifact_manifest_path:
+        with open(artifact_manifest_path, "rb") as manifest_file:
+            manifest_bytes = manifest_file.read()
+        artifact_manifest = json.loads(manifest_bytes)
+        artifact_manifest_sha256 = sha256(manifest_bytes).hexdigest()
+    if adapter_name == "ocfda" and (
+        artifact_manifest is None or artifact_manifest.get("protocol") != "B1-OCFDA"
+    ):
+        raise ValueError("B1 OCFDA requires a B1 artifact manifest")
+    if adapter_name == "ocfda" and (
+        artifact_manifest.get("model") != base_model
+        or artifact_manifest.get("model_revision") != model_revision
+        or artifact_manifest.get("tokenizer_revision") != (tokenizer_revision or model_revision)
+    ):
+        raise ValueError("B1 OCFDA training arguments do not match the artifact manifest model pin")
     gradient_accumulation_steps = batch_size // micro_batch_size
 
     device_map = "auto"
@@ -211,9 +277,15 @@ def train(
     if not torch.cuda.is_available():
         model_dtype = torch.float32
         device_map = None
+        effective_bf16 = False
     else:
-        model_dtype = torch.float32 if adapter_name == "sift" else (torch.bfloat16 if bf16 else torch.float16)
+        effective_bf16 = bool(bf16)
+        model_dtype = torch.float32 if adapter_name == "sift" else (torch.bfloat16 if effective_bf16 else torch.float16)
         device_map = {"": int(os.environ.get("LOCAL_RANK", 0))}
+
+    revision_kwargs = {"revision": model_revision} if model_revision else {}
+    tokenizer_revision = tokenizer_revision or model_revision
+    tokenizer_revision_kwargs = {"revision": tokenizer_revision} if tokenizer_revision else {}
 
     if load_8bit:
         model = AutoModelForCausalLM.from_pretrained(
@@ -222,6 +294,7 @@ def train(
             torch_dtype=model_dtype,
             device_map=device_map,
             trust_remote_code=True,
+            **revision_kwargs,
         )
     else:
         model = AutoModelForCausalLM.from_pretrained(
@@ -230,10 +303,11 @@ def train(
             torch_dtype=model_dtype,
             device_map=device_map,
             trust_remote_code=True,
-            attn_implementation=attn_implementation
+            attn_implementation=attn_implementation,
+            **revision_kwargs,
         )
 
-    tokenizer = AutoTokenizer.from_pretrained(base_model, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(base_model, trust_remote_code=True, **tokenizer_revision_kwargs)
 
     tokenizer.pad_token_id = (
         0  # unk. we want this to be different from the eos token
@@ -292,6 +366,10 @@ def train(
             model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
         model.gradient_checkpointing_enable()
 
+    ocfda_host_hashes = None
+    if adapter_name == "ocfda":
+        ocfda_host_hashes = host_tensor_hashes(model)
+
     if adapter_name == "lora":
         config = LoraConfig(
             r=lora_r,
@@ -346,6 +424,14 @@ def train(
             calibration_nsamples=calibration_nsamples,
             calibration_seed=calibration_seed,
         )
+    elif adapter_name == "ocfda":
+        model = get_ocfda_model(
+            model,
+            geometry=ocfda_geometry,
+            support_seed=support_seed,
+            k=ocfda_k,
+        )
+        verify_zero_graft_noop(model)
     elif adapter_name == "no":
         pass
 
@@ -371,6 +457,8 @@ def train(
         optimizer = torch.optim.AdamW(trainable_params, lr=learning_rate, weight_decay=weight_decay)
     else:
         raise ValueError("wrong optimizer name.")
+    if adapter_name == "ocfda":
+        verify_optimizer_ownership(optimizer, model)
 
     if data_path.endswith(".json"):  # todo: support jsonl
         data = load_dataset("json", data_files=data_path)
@@ -397,13 +485,13 @@ def train(
             test_size=val_set_size, shuffle=True, seed=val_split_seed
         )
         train_data = (
-            train_val["train"].shuffle().map(generate_and_tokenize_prompt)
+            train_val["train"].shuffle(seed=seed).map(generate_and_tokenize_prompt)
         )
         val_data = (
-            train_val["test"].shuffle().map(generate_and_tokenize_prompt)
+            train_val["test"].shuffle(seed=seed).map(generate_and_tokenize_prompt)
         )
     else:
-        train_data = data["train"].shuffle().map(generate_and_tokenize_prompt)
+        train_data = data["train"].shuffle(seed=seed).map(generate_and_tokenize_prompt)
         val_data = None
 
     if not ddp and torch.cuda.device_count() > 1:
@@ -429,8 +517,8 @@ def train(
             num_train_epochs=num_epochs,
             learning_rate=learning_rate,
             seed=seed,
-            fp16=adapter_name != "sift" and not bf16,
-            bf16=bf16,
+            fp16=adapter_name != "sift" and not effective_bf16 and torch.cuda.is_available(),
+            bf16=effective_bf16,
             logging_steps=logging_steps,
             eval_strategy="steps" if val_set_size > 0 else "no",
             save_strategy="steps" if save_model else "no",
@@ -465,8 +553,10 @@ def train(
         get_state_dict_func = get_sparse_dense_model_state_dict
     elif adapter_name == "supra":
         get_state_dict_func = get_sparse_dense_lora_model_state_dict
+    elif adapter_name == "ocfda":
+        get_state_dict_func = get_ocfda_model_state_dict
 
-    if adapter_name in ["super", "supra"]:
+    if adapter_name in ["super", "supra", "ocfda"]:
         old_state_dict = model.state_dict
         model.state_dict = (
             lambda self, *_, **__: get_state_dict_func(
@@ -482,6 +572,16 @@ def train(
         checkpoint = last_checkpoint
     trainer.train(resume_from_checkpoint=checkpoint)
 
+    ocfda_ownership = None
+    if adapter_name == "ocfda":
+        host_report = verify_host_tensor_hashes(model, ocfda_host_hashes)
+        ocfda_ownership = {
+            "host": host_report,
+            "detach": verify_ocfda_detach(model, ocfda_host_hashes, host_report=host_report),
+            "optimizer": verify_optimizer_ownership(optimizer, model),
+        }
+        model.ocfda_ownership_report = ocfda_ownership
+
     if save_model and not int(os.environ.get("LOCAL_RANK", 0)):
         if adapter_name == "sift":
             dense_state = {
@@ -492,7 +592,17 @@ def train(
             model.save_pretrained(output_dir, state_dict=dense_state)
         else:
             model.save_pretrained(output_dir)
-        tokenizer.save_pretrained(output_dir)
+        tokenizer_files = tokenizer.save_pretrained(output_dir) or ()
+        tokenizer_artifacts = {}
+        for tokenizer_file in tokenizer_files:
+            tokenizer_file = os.fspath(tokenizer_file)
+            if not os.path.isabs(tokenizer_file):
+                tokenizer_file = os.path.join(output_dir, tokenizer_file)
+            relative_path = os.path.relpath(tokenizer_file, output_dir).replace(os.sep, "/")
+            tokenizer_artifacts[relative_path] = sha256_file(tokenizer_file)
+        if adapter_name == "ocfda" and artifact_manifest is not None:
+            with open(os.path.join(output_dir, "artifact_manifest.json"), "wb") as manifest_file:
+                manifest_file.write(manifest_bytes)
         metadata = {
             "format_version": 1,
             "method": method_name or adapter_name,
@@ -508,10 +618,42 @@ def train(
             "calibration_data": calibration_data,
             "calibration_nsamples": int(calibration_nsamples),
             "calibration_seed": int(calibration_seed),
-            "bf16": bool(bf16),
+            "bf16": bool(effective_bf16),
+            "model_revision": model_revision or None,
+            "tokenizer_revision": tokenizer_revision or None,
+            "training_seed": int(seed),
+            "weight_decay": float(weight_decay),
+            "optimizer_name": optimizer_name,
         }
-        with open(os.path.join(output_dir, "supertuning_config.json"), "w") as metadata_file:
+        if adapter_name == "ocfda":
+            metadata.update(
+                {
+                    "protocol": "B1-OCFDA",
+                    "geometry": ocfda_geometry,
+                    "support_seed": int(support_seed),
+                    "ocfda_k": int(ocfda_k),
+                    "ocfda_trainable_scalars": int(model.optimizer_trainable_params),
+                    "ocfda_supports": model.ocfda_supports,
+                    "ocfda_ownership": ocfda_ownership,
+                    "artifact_manifest_path": os.path.abspath(artifact_manifest_path)
+                    if artifact_manifest_path
+                    else None,
+                    "artifact_manifest_sha256": artifact_manifest_sha256,
+                    "tokenizer_files": tokenizer_artifacts,
+                    "dataset_artifacts": {
+                        key: artifact_manifest[key]
+                        for key in ("train_data", "heldout_dataset", "benchmark_source")
+                        if artifact_manifest is not None and key in artifact_manifest
+                    },
+                }
+            )
+        with open(os.path.join(output_dir, "supertuning_config.json"), "w", encoding="utf-8") as metadata_file:
             json.dump(metadata, metadata_file, indent=2, sort_keys=True)
+
+    if adapter_name == "ocfda" and not int(os.environ.get("LOCAL_RANK", 0)):
+        os.makedirs(output_dir, exist_ok=True)
+        with open(os.path.join(output_dir, "ocfda_ownership.json"), "w", encoding="utf-8") as ownership_file:
+            json.dump(ocfda_ownership, ownership_file, indent=2, sort_keys=True)
 
     return model, tokenizer
 
@@ -540,7 +682,9 @@ def generate_prompt(data_point):
 
 
 if __name__ == "__main__":
-    print("CUDA Available:", torch.cuda.is_available())
+    print("GPU Available:", torch.cuda.is_available())
+    print("PyTorch HIP:", getattr(torch.version, "hip", None))
+    print("PyTorch CUDA compatibility version:", getattr(torch.version, "cuda", None))
     for __i in range(torch.cuda.device_count()):
         print(f"GPU {__i}: {torch.cuda.get_device_name(__i)}")
 

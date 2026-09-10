@@ -18,7 +18,7 @@ def normalize_instruction(value: str) -> str:
 
 
 def load_records(path: str) -> list[dict]:
-    with open(path, "r") as input_file:
+    with open(path, "r", encoding="utf-8") as input_file:
         records = json.load(input_file)
     if not isinstance(records, list):
         raise ValueError(f"Expected a JSON list in {path}")
@@ -69,7 +69,7 @@ def write_heldout(heldout_by_dataset: dict[str, list[dict]], output_dir: str) ->
     for dataset, records in heldout_by_dataset.items():
         directory = os.path.join(output_dir, dataset)
         os.makedirs(directory, exist_ok=True)
-        with open(os.path.join(directory, "test.json"), "w") as output_file:
+        with open(os.path.join(directory, "test.json"), "w", encoding="utf-8") as output_file:
             json.dump(records, output_file, indent=2)
             output_file.write("\n")
 

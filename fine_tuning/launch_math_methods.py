@@ -64,7 +64,10 @@ def launch_job(command: List[str], gpu: str, env: dict, log_path: str) -> Tuple[
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     log_file = open(log_path, "w")
     job_env = dict(env)
+    # Keep the compatibility name and set the native HIP/ROCr masks as well.
     job_env["CUDA_VISIBLE_DEVICES"] = gpu
+    job_env["HIP_VISIBLE_DEVICES"] = gpu
+    job_env["ROCR_VISIBLE_DEVICES"] = gpu
     print("Launching on GPU", gpu, ":", " ".join(command))
     process = subprocess.Popen(
         command,

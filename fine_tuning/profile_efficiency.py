@@ -702,9 +702,9 @@ def materialize_outputs(args, rows: List[dict], model_order: List[str], method_o
         caption=(
             "Implementation-level efficiency measurements for Math17K profiling runs. "
             "Both models use rank-equivalent budget $r_0=8$, batch size 16, micro-batch size 16, "
-            f"and {args.profile_steps} optimizer steps on a single NVIDIA H200 GPU. "
+            f"and {args.profile_steps} optimizer steps on a single GPU. "
             "Checkpoint size is the saved full-model checkpoint for full fine-tuning and the saved adapter state otherwise. "
-            "Peak memory is peak CUDA allocated memory during the measured training region. "
+            "Peak memory is peak GPU allocated memory during the measured training region. "
             "Adam state is measured directly from tensor storage present in the instantiated optimizer after the profiling steps; "
             "it reflects the actual parameter dtypes and optimizer-state representation used by each method rather than a uniform "
             "two-FP32-state estimate. In particular, full fine-tuning stores two bf16 Adam moment tensors in these runs, so its "

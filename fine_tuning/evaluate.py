@@ -116,7 +116,7 @@ def _load_eval_progress(progress_path: Optional[str], total: int) -> dict[int, d
     completed = {}
     if not progress_path or not os.path.exists(progress_path):
         return completed
-    with open(progress_path, "r") as progress_file:
+    with open(progress_path, "r", encoding="utf-8") as progress_file:
         for line in progress_file:
             try:
                 row = json.loads(line)
@@ -134,7 +134,7 @@ def _append_eval_progress(progress_path: Optional[str], row: dict) -> None:
     directory = os.path.dirname(progress_path)
     if directory:
         os.makedirs(directory, exist_ok=True)
-    with open(progress_path, "a") as progress_file:
+    with open(progress_path, "a", encoding="utf-8") as progress_file:
         progress_file.write(json.dumps(row, sort_keys=True) + "\n")
         progress_file.flush()
 
@@ -165,7 +165,7 @@ def load_data(dataset: str, dataset_dir: Optional[str] = None) -> list[dict]:
     path = os.path.join(dataset_dir, dataset, "test.json")
     if not os.path.exists(path):
         raise FileNotFoundError(f"Dataset file not found: {path}")
-    with open(path, "r") as dataset_file:
+    with open(path, "r", encoding="utf-8") as dataset_file:
         return json.load(dataset_file)
 
 
@@ -177,5 +177,12 @@ def extract_answer_number(dataset_name: str, sentence: str) -> float:
 
 
 def extract_answer_letter(sentence: str) -> str:
-    matches = re.findall(r"A|B|C|D|E", sentence.strip())
-    return matches[0] if matches else ""
+    explicit = re.findall(
+        r"(?:final\s+answer|answer|option|choice)\s*(?:is|:|=)?\s*[\(\[]?\s*([A-E])\b",
+        sentence,
+        flags=re.IGNORECASE,
+    )
+    if explicit:
+        return explicit[-1].upper()
+    matches = re.findall(r"\b([A-E])\b", sentence, flags=re.IGNORECASE)
+    return matches[-1].upper() if matches else ""

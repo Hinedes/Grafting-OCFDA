@@ -6,7 +6,7 @@ Include the following in reproducibility reports:
 
 - exact command or JSON preset
 - commit hash
-- Python, PyTorch, Transformers, PEFT, and CUDA versions
+- Python, PyTorch, Transformers, PEFT, and CUDA/ROCm versions
 - model name and GPU type
 - relevant traceback and the corresponding worker log
 

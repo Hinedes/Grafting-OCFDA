@@ -4,6 +4,8 @@
 
 Official implementation of **Super-Tuning: From Activation-Aware Pruning to Sparse Fine-Tuning**.
 
+> **Attribution:** This repository is a derivative of the [Super-Tuning](https://github.com/vectozavr/SuperTuning) codebase by Ivan Ilin, Philip Zmushko, and Peter Richtarik, pinned at scaffold commit `3e961f0bb7ca49417f3804d7a61b24af58fab21d`, and retains the upstream MIT [`LICENSE`](LICENSE). It adds the frozen B1 OCFDA ("Grafting") experiment, its artifact and integrity checks, and local verification tests. Credit for the Super-Tuning framework, baselines, and Math17K pipeline remains with the original authors.
+
 Super turns pruning scores into fixed sparse fine-tuning supports. For a linear-layer weight $W_{ij}$, the Wanda variant ranks coordinates with
 
 $$
@@ -34,7 +36,7 @@ where $X_{j:}$ contains calibration activations entering input coordinate $j$. S
 
 ## Installation
 
-The tested setup uses Python 3.10 or 3.11, PyTorch 2.5/2.6, and an NVIDIA GPU. RoSA additionally requires Linux/CUDA because it uses bitsandbytes.
+The B1 target uses Python 3.10 or 3.11, PyTorch 2.5/2.6, and an AMD MI300X with a ROCm/HIP PyTorch build. Legacy RoSA additionally requires Linux/CUDA because it uses bitsandbytes.
 
 ```bash
 git clone https://github.com/vectozavr/SuperTuning.git
@@ -43,10 +45,12 @@ cd SuperTuning
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[rosa,tracking,analysis]"
+python -m pip install -e ".[tracking,analysis]"
 ```
 
 Request access to the gated Meta Llama checkpoints and authenticate with Hugging Face before running the examples. C4 calibration is downloaded through `datasets`; set `HF_HOME` and `HF_DATASETS_CACHE` when cluster storage requires a specific cache location.
+
+Install the optional `[rosa]` extra only for the legacy Linux/CUDA RoSA path.
 
 For development:
 
@@ -87,6 +91,16 @@ supertuning-math \
 ```
 
 The default protocol uses Math17K, `r0=8`, batch size 16, micro-batch size 16, sequence length 256, 120 validation examples, 100 warmup steps, seed 0, and 128 C4 calibration samples.
+
+## B1 OCFDA experiment
+
+The frozen B1 handoff is executable through `grafting-b1`. It materializes the instruction-disjoint Math17K benchmark subsets, hashes the pinned artifacts, runs the two-step smoke run, gates on the clean Base/LoRA sentinel, selects one shared OCFDA learning rate from the reserved pilot, and then runs the sanity pair and 18 confirmatory runs:
+
+```bash
+grafting-b1 --output_dir runs/b1
+```
+
+The B1 runner requires the pinned Super-Tuning commit as an ancestor, rejects changes outside the allowlisted B1 patch, and records hashes for the active source tree and model snapshot. It invokes `ocfda-aligned` and `ocfda-independent` through `supertuning-math`, fixing Llama-3.2-1B, `k=57`, Gate/Up/Down-only FP32 deltas, AdamW with zero weight decay, and the clean held-out suite.
 
 ## Paper presets
 

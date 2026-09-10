@@ -6,7 +6,7 @@ import argparse
 import json
 import os
 
-from .checkpoints import load_checkpoint
+from .checkpoints import B1_PROTOCOL, load_checkpoint
 from .evaluate import eval_model
 
 BENCHMARKS = ("AddSub", "MultiArith", "SingleEq", "gsm8k", "AQuA", "SVAMP")
@@ -28,6 +28,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_new_tokens", type=int, default=256)
     parser.add_argument("--num_beams", type=int, default=4)
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument(
+        "--resume_progress",
+        action="store_true",
+        help="Explicitly resume existing evaluation progress instead of requiring fresh progress files.",
+    )
+    parser.add_argument("--no_resume_progress", action="store_true", help="Do not resume generic checkpoint progress.")
     parser.add_argument("--no_merge_rosa", dest="merge_rosa", action="store_false")
     parser.set_defaults(merge_rosa=True)
     return parser.parse_args()
@@ -43,25 +49,41 @@ def main() -> None:
         dtype=args.dtype,
         merge_rosa=args.merge_rosa,
     )
+    manifest_dataset_dir = (
+        metadata.get("dataset_artifacts", {}).get("heldout_dataset", {}).get("path")
+        if metadata.get("protocol") == B1_PROTOCOL
+        else None
+    )
+    if metadata.get("protocol") == B1_PROTOCOL and args.dataset_dir:
+        if os.path.abspath(args.dataset_dir) != os.path.abspath(manifest_dataset_dir or ""):
+            raise RuntimeError("B1 checkpoints must be evaluated on their manifest-held-out benchmark subsets")
+    dataset_dir = args.dataset_dir or manifest_dataset_dir or None
+    resume_progress = args.resume_progress or (
+        metadata.get("protocol") != B1_PROTOCOL and not args.no_resume_progress
+    )
 
     scores = {}
     for dataset in (item.strip() for item in args.datasets.split(",") if item.strip()):
+        progress_path = os.path.join(output_dir, f"{dataset}.jsonl")
+        if not resume_progress and os.path.exists(progress_path) and os.path.getsize(progress_path) > 0:
+            raise RuntimeError(f"Evaluation progress already exists; use a fresh output directory: {progress_path}")
         scores[dataset] = 100.0 * eval_model(
             dataset,
             model,
             tokenizer,
-            dataset_dir=args.dataset_dir or None,
+            dataset_dir=dataset_dir,
             max_examples=args.max_examples,
             max_new_tokens=args.max_new_tokens,
             num_beams=args.num_beams,
             verbose=args.verbose,
-            progress_path=os.path.join(output_dir, f"{dataset}.jsonl"),
+            progress_path=progress_path,
+            resume_progress=resume_progress,
         )
     scores["Average"] = sum(scores.values()) / len(scores)
 
     result = {"checkpoint": args.checkpoint, "metadata": metadata, "accuracy": scores}
     result_path = os.path.join(output_dir, "accuracy.json")
-    with open(result_path, "w") as result_file:
+    with open(result_path, "w", encoding="utf-8") as result_file:
         json.dump(result, result_file, indent=2, sort_keys=True)
     print(json.dumps(scores, indent=2, sort_keys=True))
     print("Wrote", result_path)

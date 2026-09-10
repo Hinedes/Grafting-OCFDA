@@ -1,5 +1,6 @@
 import argparse
 import gc
+import hashlib
 import json
 import math
 import os
@@ -26,9 +27,11 @@ sys.path.insert(1, REPO_DIR)
 try:
     from .evaluate import eval_model  # noqa: E402
     from .finetune import train  # noqa: E402
+    from .ocfda import OCFDA_DEFAULT_K, OCFDA_PROJECTIONS
 except ImportError:
     from evaluate import eval_model  # noqa: E402
     from finetune import train  # noqa: E402
+    from ocfda import OCFDA_DEFAULT_K, OCFDA_PROJECTIONS
 
 
 FULL_LLAMA_TARGET_MODULES = [
@@ -42,6 +45,7 @@ FULL_LLAMA_TARGET_MODULES = [
 ]
 
 LEGACY_TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "up_proj", "down_proj"]
+OCFDA_TARGET_MODULES = list(OCFDA_PROJECTIONS)
 MATH_BENCHMARKS = ["AddSub", "MultiArith", "SingleEq", "gsm8k", "AQuA", "SVAMP"]
 DEFAULT_METHODS = "supra-0.8-bottom"
 DEFAULT_LRS = "5e-5,1e-4,5e-4,1e-3,5e-3,1e-2,5e-2,1e-1"
@@ -55,12 +59,16 @@ class RunSpec:
     lora_r: int
     lr: float
     method: str
+    support_seed: Optional[int] = None
 
     @property
     def run_id(self) -> str:
         model_name = self.model.split("/")[-1].replace(".", "_")
         lr = f"{self.lr:g}".replace("-", "m").replace(".", "p")
-        return f"{model_name}_r{self.lora_r}_{self.method}_lr{lr}_seed{self.seed}"
+        support = ""
+        if self.support_seed is not None and self.method.startswith(("ocfda-", "graft-")):
+            support = f"_support{self.support_seed}"
+        return f"{model_name}_r{self.lora_r}_{self.method}_lr{lr}_seed{self.seed}{support}"
 
 
 def parse_csv_list(value: str, cast=str) -> List:
@@ -76,7 +84,9 @@ def set_seed(seed: int) -> None:
 
 
 def print_environment() -> None:
-    print("CUDA Available:", torch.cuda.is_available())
+    print("GPU Available:", torch.cuda.is_available())
+    print("PyTorch HIP:", getattr(torch.version, "hip", None))
+    print("PyTorch CUDA compatibility version:", getattr(torch.version, "cuda", None))
     for device_idx in range(torch.cuda.device_count()):
         print(f"GPU {device_idx}: {torch.cuda.get_device_name(device_idx)}")
     for package in ["torch", "transformers", "accelerate", "datasets"]:
@@ -107,7 +117,7 @@ def finite_or_none(value):
 
 
 def load_json(path: str) -> List[dict]:
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -356,8 +366,7 @@ def evaluate_perplexity(
     nll_by_dataset: Dict[str, float] = {}
     count_by_dataset: Dict[str, int] = {}
 
-    total_nll_weighted = 0.0
-    total_examples = 0
+    valid_nlls = []
 
     for dataset in datasets:
         records = load_json(resolve_dataset_path(dataset, dataset_dir=dataset_dir))
@@ -373,13 +382,13 @@ def evaluate_perplexity(
         ppl_by_dataset[dataset] = ppl
         nll_by_dataset[dataset] = nll
         count_by_dataset[dataset] = count
-        if count and not math.isnan(nll):
-            total_nll_weighted += nll * count
-            total_examples += count
+        if count and math.isfinite(nll):
+            valid_nlls.append(nll)
         print(f"{dataset} perplexity: {ppl:.4f} (nll={nll:.4f}, examples={count})")
 
-    if total_examples:
-        avg_nll = total_nll_weighted / total_examples
+    if valid_nlls:
+        # Keep the aggregate benchmark-weighted equally rather than letting GSM8K dominate by size.
+        avg_nll = float(np.mean(valid_nlls))
         ppl_by_dataset["Average"] = float(math.exp(min(avg_nll, 50.0)))
         nll_by_dataset["Average"] = avg_nll
     else:
@@ -518,6 +527,10 @@ def parse_method(method: str) -> Tuple[str, str, float]:
         return "lora", "none", 0.0
     if method == "rosa":
         return "rosa", "none", 0.0
+    if method in {"ocfda-aligned", "graft-aligned"}:
+        return "ocfda", "aligned", 0.0
+    if method in {"ocfda-independent", "graft-independent"}:
+        return "ocfda", "independent", 0.0
     if method.startswith("sift"):
         return "sift", "random" if "rand" in method else "super", 0.0
     if method in {"magnitude-topk", "magnitude-top", "magnitude", "super-magnitude", "mag-topk", "mag-top"}:
@@ -583,7 +596,8 @@ def parse_method(method: str) -> Tuple[str, str, float]:
 
 
 def build_budget_plan(args, spec: RunSpec, target_modules: List[str]) -> dict:
-    config = AutoConfig.from_pretrained(spec.model, trust_remote_code=True)
+    config_kwargs = {"revision": args.model_revision} if getattr(args, "model_revision", "") else {}
+    config = AutoConfig.from_pretrained(spec.model, trust_remote_code=True, **config_kwargs)
     shapes = llama_module_shapes(config, target_modules)
     target_dense_params = sum(out_features * in_features for out_features, in_features in shapes)
     reference_lora_params = lora_param_count(shapes, spec.lora_r)
@@ -595,6 +609,7 @@ def build_budget_plan(args, spec: RunSpec, target_modules: List[str]) -> dict:
     train_sparse_rate = total_sparse_rate
     train_lora_r = spec.lora_r
     component_lora_ratio = None
+    ocfda_k = int(getattr(args, "ocfda_k", OCFDA_DEFAULT_K))
 
     if adapter_name == "base":
         train_sparse_rate = 0.0
@@ -623,6 +638,28 @@ def build_budget_plan(args, spec: RunSpec, target_modules: List[str]) -> dict:
         adapter_params = lora_param_count(shapes, train_lora_r) + sparse_param_count(
             shapes, train_sparse_rate, add_one=False
         )
+    elif adapter_name == "ocfda":
+        if tuple(target_modules) != tuple(FULL_LLAMA_TARGET_MODULES):
+            raise ValueError("OCFDA budget planning expects the seven-projection LoRA reference target set.")
+        if (
+            int(config.num_hidden_layers) != 16
+            or int(config.hidden_size) != 2048
+            or int(config.intermediate_size) != 8192
+            or int(config.num_attention_heads) != 32
+            or int(getattr(config, "num_key_value_heads", config.num_attention_heads)) != 8
+            or int(getattr(config, "head_dim", 64)) != 64
+        ):
+            raise ValueError(
+                "OCFDA B1 is frozen to the Llama-3.2-1B GQA dimensions: "
+                "16 layers, hidden 2048, intermediate 8192, heads 32, KV heads 8, head_dim 64."
+            )
+        target_dense_params = sum(
+            int(config.hidden_size) * int(config.intermediate_size) for _ in range(3 * int(config.num_hidden_layers))
+        )
+        adapter_params = 3 * int(config.num_hidden_layers) * ocfda_k * int(config.hidden_size)
+        total_sparse_rate = adapter_params / target_dense_params
+        train_sparse_rate = total_sparse_rate
+        train_lora_r = 0
     else:
         raise ValueError(f"Unsupported adapter for budget planning: {adapter_name}")
 
@@ -651,6 +688,8 @@ def build_budget_plan(args, spec: RunSpec, target_modules: List[str]) -> dict:
         "adapter_budget_error_pct": budget_error_pct,
         "is_baseline": adapter_name == "base",
         "is_unbudgeted": adapter_name == "full",
+        "ocfda_k": ocfda_k if adapter_name == "ocfda" else None,
+        "ocfda_geometry": mask_choice if adapter_name == "ocfda" else None,
     }
 
 
@@ -706,6 +745,7 @@ def merge_adapter_for_evaluation(model, adapter_name: str) -> Tuple[object, bool
 def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[str]):
     adapter_name, mask_choice, lora_params_ratio = parse_method(spec.method)
     random_indices = mask_choice == "random"
+    method_target_modules = OCFDA_TARGET_MODULES if adapter_name == "ocfda" else target_modules
     output_dir = os.path.join(args.checkpoint_dir, spec.run_id)
     calibration_data = args.train_data if args.calibration_data == "same_as_train" else args.calibration_data
     if adapter_name == "rosa":
@@ -728,16 +768,26 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
         return None, None, output_dir
 
     if adapter_name == "base":
-        tokenizer = AutoTokenizer.from_pretrained(spec.model, trust_remote_code=True)
+        tokenizer_kwargs = {}
+        if getattr(args, "tokenizer_revision", "") or getattr(args, "model_revision", ""):
+            tokenizer_kwargs["revision"] = getattr(args, "tokenizer_revision", "") or getattr(args, "model_revision", "")
+        tokenizer = AutoTokenizer.from_pretrained(spec.model, trust_remote_code=True, **tokenizer_kwargs)
         tokenizer.pad_token_id = 0
         tokenizer.padding_side = "left"
+        base_dtype = torch.bfloat16 if getattr(args, "bf16", False) else torch.float16
+        if not torch.cuda.is_available():
+            base_dtype = torch.float32
+        model_kwargs = {}
+        if getattr(args, "model_revision", ""):
+            model_kwargs["revision"] = args.model_revision
         model = AutoModelForCausalLM.from_pretrained(
             spec.model,
             load_in_8bit=False,
-            torch_dtype=torch.float16,
-            device_map={"": int(os.environ.get("LOCAL_RANK", 0))},
+            torch_dtype=base_dtype,
+            device_map={"": int(os.environ.get("LOCAL_RANK", 0))} if torch.cuda.is_available() else None,
             trust_remote_code=True,
             attn_implementation="sdpa",
+            **model_kwargs,
         )
         for parameter in model.parameters():
             parameter.requires_grad_(False)
@@ -750,7 +800,7 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
     common_kwargs = dict(
         base_model=spec.model,
         data_path=args.train_data,
-        target_modules=target_modules,
+        target_modules=method_target_modules,
         eval_step=args.eval_step,
         save_step=args.save_step,
         val_split_seed=args.val_split_seed,
@@ -772,8 +822,21 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
         max_steps=args.max_steps,
         warmup_steps=args.warmup_steps,
         optimizer_name=args.optimizer_name,
+        weight_decay=getattr(args, "weight_decay", 0.0),
         save_model=args.save_adapters,
     )
+    if adapter_name != "rosa":
+        common_kwargs.update(
+            model_revision=getattr(args, "model_revision", ""),
+            tokenizer_revision=getattr(args, "tokenizer_revision", ""),
+            artifact_manifest_path=getattr(args, "artifact_manifest_path", ""),
+        )
+    if adapter_name == "ocfda":
+        common_kwargs.update(
+            support_seed=spec.support_seed if spec.support_seed is not None else 0,
+            ocfda_geometry=mask_choice,
+            ocfda_k=getattr(args, "ocfda_k", OCFDA_DEFAULT_K),
+        )
     training_curve_dir = getattr(args, "training_curve_dir", "")
     if training_curve_dir:
         training_curve_path = os.path.join(training_curve_dir, f"{spec.run_id}.jsonl")
@@ -788,7 +851,7 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
             "train_lora_r": budget_plan["train_lora_r"],
             "train_sparse_rate": budget_plan["train_sparse_rate"],
             "component_lora_ratio": budget_plan["component_lora_ratio"],
-            "target_modules": target_modules,
+            "target_modules": method_target_modules,
             "calibration_data": calibration_data if adapter_name != "rosa" else None,
             "full_ft_checkpoint": args.full_ft_checkpoint if mask_choice.startswith("full-delta") else None,
         }
@@ -817,7 +880,7 @@ def train_one_run(args, spec: RunSpec, budget_plan: dict, target_modules: List[s
             common_kwargs["bf16"] = True
 
     if args.dry_run:
-        print("DRY RUN:", json.dumps({**common_kwargs, "target_modules": target_modules}, indent=2, default=str))
+        print("DRY RUN:", json.dumps({**common_kwargs, "target_modules": method_target_modules}, indent=2, default=str))
         return None, None, output_dir
 
     if adapter_name == "rosa":
@@ -835,7 +898,7 @@ def load_existing_results(path: str) -> Dict[str, dict]:
     results: Dict[str, dict] = {}
     if not os.path.exists(path):
         return results
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         for line in f:
             if not line.strip():
                 continue
@@ -846,7 +909,7 @@ def load_existing_results(path: str) -> Dict[str, dict]:
 
 def append_jsonl(path: str, row: dict) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "a") as f:
+    with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(row, sort_keys=True) + "\n")
 
 
@@ -1071,6 +1134,7 @@ def build_tables(
         )
 
         accuracy_row = dict(index_values)
+        accuracy_row["support_seed"] = row.get("support_seed")
         accuracy_row["trainable_params"] = trainable_params
         for dataset in datasets:
             accuracy_row[dataset] = row.get("accuracy", {}).get(dataset)
@@ -1078,6 +1142,7 @@ def build_tables(
         accuracy_rows.append(accuracy_row)
 
         ppl_row = dict(index_values)
+        ppl_row["support_seed"] = row.get("support_seed")
         ppl_row["trainable_params"] = trainable_params
         for dataset in datasets:
             ppl_row[dataset] = row.get("ppl", {}).get(dataset)
@@ -1085,6 +1150,7 @@ def build_tables(
         ppl_rows.append(ppl_row)
 
         nll_row = dict(index_values)
+        nll_row["support_seed"] = row.get("support_seed")
         nll_row["trainable_params"] = trainable_params
         for dataset in datasets:
             nll_row[dataset] = row.get("nll", {}).get(dataset)
@@ -1093,6 +1159,7 @@ def build_tables(
 
         summary_row = dict(index_values)
         summary_row.update(
+            support_seed=row.get("support_seed"),
             sparse_rate=row.get("sparse_rate"),
             total_sparse_rate=row.get("total_sparse_rate"),
             train_sparse_rate=row.get("train_sparse_rate"),
@@ -1188,6 +1255,7 @@ def save_selected_lr_tables(
                 "model": row["model"],
                 "lora_r": row["lora_r"],
                 "method": row["method"],
+                "selection_method": "ocfda" if row["method"].startswith(("ocfda-", "graft-")) else row["method"],
                 "lr": row["lr"],
                 "seed": row["seed"],
                 "lr_tuning_nll": row["lr_tuning"]["nll"],
@@ -1202,7 +1270,7 @@ def save_selected_lr_tables(
         )
     tune_df = pd.DataFrame(df_rows)
     grouped = (
-        tune_df.groupby(["model", "lora_r", "method", "lr"], dropna=False)
+        tune_df.groupby(["model", "lora_r", "selection_method", "lr"], dropna=False)
         .agg(
             selection_nll=("lr_tuning_nll", "mean"),
             selection_ppl=("lr_tuning_ppl", "mean"),
@@ -1216,8 +1284,33 @@ def save_selected_lr_tables(
         )
         .reset_index()
     )
-    idx = grouped.groupby(["model", "lora_r", "method"])["selection_nll"].idxmin()
-    selected_lr_df = grouped.loc[idx].sort_values(["model", "lora_r", "method"]).rename(columns={"lr": "selected_lr"})
+    selected_indices = []
+    for group_key, group in grouped.groupby(["model", "lora_r", "selection_method"]):
+        if group_key[2] == "ocfda":
+            best_nll = float(group["selection_nll"].min())
+            tolerance = max(abs(best_nll) * 0.005, 1e-12)
+            selected_lr = float(group.loc[group["selection_nll"] <= best_nll + tolerance, "lr"].min())
+            selected_indices.append(group.index[group["lr"] == selected_lr][0])
+        else:
+            selected_indices.append(group["selection_nll"].idxmin())
+    selected_rows = []
+    for selected in grouped.loc[selected_indices].to_dict("records"):
+        methods = sorted(
+            tune_df.loc[
+                (tune_df["model"] == selected["model"])
+                & (tune_df["lora_r"] == selected["lora_r"])
+                & (tune_df["selection_method"] == selected["selection_method"]),
+                "method",
+            ].unique()
+        )
+        for method in methods:
+            selected_row = dict(selected)
+            selected_row["method"] = method
+            selected_row.pop("selection_method", None)
+            selected_rows.append(selected_row)
+    selected_lr_df = pd.DataFrame(selected_rows).sort_values(["model", "lora_r", "method"]).rename(
+        columns={"lr": "selected_lr"}
+    )
     selected_lr_df.to_csv(os.path.join(out_dir, "selected_lr_by_method.csv"), index=False)
     with open(os.path.join(out_dir, "selected_lr_by_method.tex"), "w") as f:
         f.write(selected_lr_df.to_latex(index=False, float_format=lambda value: f"{value:.4g}"))
@@ -1234,7 +1327,7 @@ def save_selected_lr_tables(
             selected_results.append(row)
 
     selected_by_id = {
-        f'{row["model"]}|{row["lora_r"]}|{row["method"]}|{row["seed"]}': row
+        f'{row["model"]}|{row["lora_r"]}|{row["method"]}|{row["seed"]}|{row.get("support_seed")}': row
         for row in selected_results
     }
     with open(os.path.join(out_dir, "selected_run_results.jsonl"), "w") as f:
@@ -1256,6 +1349,7 @@ def save_selected_lr_tables(
                 "method": row["method"],
                 "selected_lr": selected_lr,
                 "seed": row["seed"],
+                "support_seed": row.get("support_seed"),
                 "trainable_params": trainable_params,
             }
             for dataset in datasets + ["Average"]:
@@ -1322,6 +1416,13 @@ def make_result_row(
     lr_tuning: dict,
     eval_stage: str,
 ) -> dict:
+    artifact_manifest = None
+    artifact_manifest_sha256 = None
+    if getattr(args, "artifact_manifest_path", ""):
+        with open(args.artifact_manifest_path, "rb") as manifest_file:
+            manifest_bytes = manifest_file.read()
+        artifact_manifest = json.loads(manifest_bytes)
+        artifact_manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
     return {
         "run_id": spec.run_id,
         **asdict(spec),
@@ -1332,6 +1433,17 @@ def make_result_row(
         "target_modules": target_modules,
         "train_data": args.train_data,
         "dataset_dir": args.dataset_dir,
+        "model_revision": getattr(args, "model_revision", ""),
+        "tokenizer_revision": getattr(args, "tokenizer_revision", ""),
+        "optimizer_name": getattr(args, "optimizer_name", ""),
+        "weight_decay": getattr(args, "weight_decay", 0.0),
+        "artifact_manifest_path": getattr(args, "artifact_manifest_path", ""),
+        "artifact_manifest_sha256": artifact_manifest_sha256,
+        "dataset_artifacts": {
+            key: artifact_manifest[key]
+            for key in ("train_data", "heldout_dataset", "benchmark_source")
+            if artifact_manifest is not None and key in artifact_manifest
+        },
         "calibration_data": resolved_calibration_data(args),
         "calibration_nsamples": args.calibration_nsamples,
         "calibration_seed": args.calibration_seed,
@@ -1403,14 +1515,22 @@ def run_spec_once(
             "actual trainable budget error:",
             f"{trainable_param_report['trainable_budget_error_pct']:.4f}%",
         )
-        if abs(trainable_param_report["trainable_budget_error_pct"]) > args.budget_tolerance_pct:
+        adapter_name, _, _ = parse_method(spec.method)
+        if adapter_name == "ocfda":
+            if trainable_param_report["trainable_params"] != budget_plan["adapter_trainable_params_estimate"]:
+                raise ValueError(
+                    "OCFDA trainable params do not match the fixed sparse budget: "
+                    f"{trainable_param_report['trainable_params']} vs "
+                    f"{budget_plan['adapter_trainable_params_estimate']}."
+                )
+        elif abs(trainable_param_report["trainable_budget_error_pct"]) > args.budget_tolerance_pct:
             raise ValueError(
                 f"Actual optimizer trainable params differ from the rank-{spec.lora_r} LoRA reference by "
                 f"{trainable_param_report['trainable_budget_error_pct']:.2f}% "
                 f"({trainable_param_report['trainable_params']} vs {budget_plan['reference_lora_params']} params)."
             )
 
-        adapter_name, _, _ = parse_method(spec.method)
+        result_target_modules = OCFDA_TARGET_MODULES if adapter_name == "ocfda" else target_modules
         full_model_checkpoint_saved = False
         if adapter_name == "full" and full_eval:
             save_full_model_checkpoint(model, tokenizer, checkpoint_dir)
@@ -1437,11 +1557,14 @@ def run_spec_once(
             spec=spec,
             budget_plan=budget_plan,
             trainable_param_report=trainable_param_report,
-            target_modules=target_modules,
+            target_modules=result_target_modules,
             checkpoint_dir=checkpoint_dir,
             lr_tuning=lr_tuning,
             eval_stage=stage,
         )
+        if adapter_name == "ocfda":
+            row["ocfda_supports"] = model.ocfda_supports
+            row["ocfda_ownership"] = model.ocfda_ownership_report
         if full_model_checkpoint_saved:
             row["full_model_checkpoint_saved"] = True
         if adapter_merged_for_eval:
@@ -1455,6 +1578,13 @@ def run_spec_once(
                 print("Skipping generation accuracy evaluation; computing NLL/PPL only.")
             else:
                 for dataset in datasets:
+                    progress_path = eval_progress_path(args.out_dir, spec, dataset)
+                    if (
+                        getattr(args, "no_resume_eval_progress", False)
+                        and os.path.exists(progress_path)
+                        and os.path.getsize(progress_path) > 0
+                    ):
+                        raise RuntimeError(f"Evaluation progress already exists; use a fresh output directory: {progress_path}")
                     score = eval_model(
                         dataset_name=dataset,
                         model=model,
@@ -1464,7 +1594,8 @@ def run_spec_once(
                         max_new_tokens=args.generation_max_new_tokens,
                         num_beams=args.generation_num_beams,
                         verbose=args.verbose_generation_eval,
-                        progress_path=eval_progress_path(args.out_dir, spec, dataset),
+                        progress_path=progress_path,
+                        resume_progress=not getattr(args, "no_resume_eval_progress", False),
                     ) * 100.0
                     accuracy[dataset] = score
                     print(f"{dataset} accuracy: {score:.4f}")
@@ -1522,7 +1653,8 @@ def merged_tuning_results(tuning_rows: Dict[str, dict], full_rows: Dict[str, dic
 
 
 def selection_group_key(spec: RunSpec) -> Tuple[str, int, str]:
-    return spec.model, spec.lora_r, spec.method
+    group_method = "ocfda" if spec.method.startswith(("ocfda-", "graft-")) else spec.method
+    return spec.model, spec.lora_r, group_method
 
 
 def select_specs_from_tuning(specs: List[RunSpec], tuning_lookup: Dict[str, dict]) -> Tuple[List[RunSpec], Dict[Tuple[str, int, str], float]]:
@@ -1555,7 +1687,12 @@ def select_specs_from_tuning(specs: List[RunSpec], tuning_lookup: Dict[str, dict
 
         lr_df = pd.DataFrame(lr_rows)
         grouped = lr_df.groupby("lr")["nll"].mean()
-        selected_lr = float(grouped.idxmin())
+        if group_key[2] == "ocfda":
+            best_nll = float(grouped.min())
+            tolerance = max(abs(best_nll) * 0.005, 1e-12)
+            selected_lr = float(grouped[grouped <= best_nll + tolerance].index.min())
+        else:
+            selected_lr = float(grouped.idxmin())
         selected_lrs[group_key] = selected_lr
         print("Selected LR for", group_key, "=", f"{selected_lr:g}", "(mean nll", f"{grouped.loc[selected_lr]:.4f})")
         selected_specs.extend([spec for spec in group_specs if spec.lr == selected_lr])
@@ -1565,13 +1702,25 @@ def select_specs_from_tuning(specs: List[RunSpec], tuning_lookup: Dict[str, dict
 
 def iter_run_specs(args) -> Iterable[RunSpec]:
     all_specs = []
+    configured_support_seeds = parse_csv_list(getattr(args, "support_seeds", "0"), int)
     for seed in parse_csv_list(args.seeds, int):
         for model in parse_csv_list(args.models, str):
             for lora_r in parse_csv_list(args.lora_rs, int):
                 for method in parse_csv_list(args.methods, str):
+                    support_seeds = configured_support_seeds if method.startswith(("ocfda-", "graft-")) else [None]
                     lrs = [0.0] if method == "base" else parse_csv_list(args.lrs, float)
-                    for lr in lrs:
-                        all_specs.append(RunSpec(seed=seed, model=model, lora_r=lora_r, lr=lr, method=method))
+                    for support_seed in support_seeds:
+                        for lr in lrs:
+                            all_specs.append(
+                                RunSpec(
+                                    seed=seed,
+                                    model=model,
+                                    lora_r=lora_r,
+                                    lr=lr,
+                                    method=method,
+                                    support_seed=support_seed,
+                                )
+                            )
 
     if not 0 <= args.shard_id < args.num_shards:
         raise ValueError("--shard_id must satisfy 0 <= shard_id < num_shards")
@@ -1595,6 +1744,11 @@ def run(args) -> None:
         raise ValueError("--budget_tolerance_pct must be nonnegative.")
     if args.ppl_eval_batch_size <= 0:
         raise ValueError("--ppl_eval_batch_size must be positive.")
+    if any(parse_method(method)[0] == "ocfda" for method in parse_csv_list(args.methods, str)) and args.ocfda_k != OCFDA_DEFAULT_K:
+        raise ValueError(f"B1 OCFDA fixes --ocfda_k={OCFDA_DEFAULT_K}")
+    if any(parse_method(method)[0] == "ocfda" for method in parse_csv_list(args.methods, str)):
+        if args.optimizer_name.lower() != "adamw" or args.weight_decay != 0.0:
+            raise ValueError("B1 OCFDA fixes AdamW with zero weight decay")
     if not args.eval_all_lrs and args.skip_lr_tuning_metric:
         raise ValueError("--skip_lr_tuning_metric cannot be used with selected-only evaluation.")
     if any(parse_method(method)[1].startswith("full-delta") for method in parse_csv_list(args.methods, str)):
@@ -1781,6 +1935,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lora_rs", default="8")
     parser.add_argument("--lrs", default=DEFAULT_LRS)
     parser.add_argument("--seeds", default="0")
+    parser.add_argument("--support_seeds", default="0")
     parser.add_argument("--datasets", default=",".join(MATH_BENCHMARKS))
     parser.add_argument(
         "--dataset_dir",
@@ -1794,6 +1949,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--calibration_nsamples", type=int, default=128)
     parser.add_argument("--calibration_seed", type=int, default=228)
     parser.add_argument("--full_ft_checkpoint", default="")
+    parser.add_argument("--model_revision", default="")
+    parser.add_argument("--tokenizer_revision", default="")
+    parser.add_argument("--artifact_manifest_path", default="")
     parser.add_argument("--out_dir", default="out_math_experiments")
     parser.add_argument("--checkpoint_dir", default="checkpoints_math")
     parser.add_argument("--batch_size", type=int, default=16)
@@ -1805,6 +1963,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save_step", type=int, default=50)
     parser.add_argument("--compile", type=int, default=0)
     parser.add_argument("--optimizer_name", default="adam")
+    parser.add_argument("--weight_decay", type=float, default=0.0)
+    parser.add_argument("--ocfda_k", type=int, default=OCFDA_DEFAULT_K)
     parser.add_argument("--max_steps", type=int, default=-1)
     parser.add_argument("--warmup_steps", type=int, default=100)
     parser.add_argument("--ppl_max_length", type=int, default=256)
@@ -1836,6 +1996,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--generation_max_new_tokens", type=int, default=256)
     parser.add_argument("--generation_num_beams", type=int, default=4)
     parser.add_argument("--verbose_generation_eval", action="store_true")
+    parser.add_argument(
+        "--no_resume_eval_progress",
+        action="store_true",
+        help="Start evaluation progress files from scratch instead of reusing existing rows.",
+    )
     parser.add_argument("--val_split_seed", "--lr_tuning_split_seed", dest="val_split_seed", type=int, default=42)
     parser.add_argument("--skip_lr_tuning_metric", action="store_true")
     parser.add_argument(
