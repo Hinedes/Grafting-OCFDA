@@ -1596,6 +1596,7 @@ def run_spec_once(
                         verbose=args.verbose_generation_eval,
                         progress_path=progress_path,
                         resume_progress=not getattr(args, "no_resume_eval_progress", False),
+                        generation_batch_size=getattr(args, "generation_batch_size", 1),
                     ) * 100.0
                     accuracy[dataset] = score
                     print(f"{dataset} accuracy: {score:.4f}")
@@ -1995,6 +1996,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--generation_max_new_tokens", type=int, default=256)
     parser.add_argument("--generation_num_beams", type=int, default=4)
+    parser.add_argument(
+        "--generation_batch_size",
+        type=int,
+        default=1,
+        help="Prompts per batched generation call. 1 preserves the serial reference behavior.",
+    )
     parser.add_argument("--verbose_generation_eval", action="store_true")
     parser.add_argument(
         "--no_resume_eval_progress",

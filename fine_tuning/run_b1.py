@@ -89,6 +89,7 @@ B1_ALLOWED_TREE_CHANGES = {
     "tests/test_b1_statistics.py",
     "tests/test_checkpoint_metadata.py",
     "tests/test_data_integrity.py",
+    "tests/test_evaluate_batching.py",
     "tests/test_ocfda.py",
     "tests/test_run_b1.py",
 }

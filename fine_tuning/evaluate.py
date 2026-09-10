@@ -20,6 +20,38 @@ def _model_device(model) -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+def _response_from_decoded(decoded: str) -> str:
+    if "### Response:" in decoded:
+        return decoded.split("### Response:", 1)[1].strip()
+    return decoded.strip()
+
+
+def _run_generation(model, inputs, tokenizer, num_beams: int, max_new_tokens: int):
+    generation_config = GenerationConfig(
+        num_beams=num_beams,
+        do_sample=False,
+        pad_token_id=(
+            tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+        ),
+        eos_token_id=tokenizer.eos_token_id,
+    )
+    previous_use_cache = getattr(model.config, "use_cache", None)
+    model.config.use_cache = True
+    try:
+        with torch.no_grad():
+            return model.generate(
+                **inputs,
+                generation_config=generation_config,
+                return_dict_in_generate=True,
+                output_scores=False,
+                max_new_tokens=max_new_tokens,
+                use_cache=True,
+            )
+    finally:
+        if previous_use_cache is not None:
+            model.config.use_cache = previous_use_cache
+
+
 def eval_model(
     dataset_name: str,
     model,
@@ -31,6 +63,7 @@ def eval_model(
     verbose: bool = False,
     progress_path: Optional[str] = None,
     resume_progress: bool = True,
+    generation_batch_size: int = 1,
 ) -> float:
     device = _model_device(model)
 
@@ -38,34 +71,9 @@ def eval_model(
         prompt = generate_prompt(instruction, input_text)
         inputs = tokenizer(prompt, return_tensors="pt")
         inputs = {name: tensor.to(device) for name, tensor in inputs.items()}
-        generation_config = GenerationConfig(
-            num_beams=num_beams,
-            do_sample=False,
-            pad_token_id=(
-                tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
-            ),
-            eos_token_id=tokenizer.eos_token_id,
-        )
-        previous_use_cache = getattr(model.config, "use_cache", None)
-        model.config.use_cache = True
-        try:
-            with torch.no_grad():
-                output = model.generate(
-                    **inputs,
-                    generation_config=generation_config,
-                    return_dict_in_generate=True,
-                    output_scores=False,
-                    max_new_tokens=max_new_tokens,
-                    use_cache=True,
-                )
-        finally:
-            if previous_use_cache is not None:
-                model.config.use_cache = previous_use_cache
-
+        output = _run_generation(model, inputs, tokenizer, num_beams, max_new_tokens)
         decoded = tokenizer.decode(output.sequences[0], skip_special_tokens=True)
-        if "### Response:" in decoded:
-            return decoded.split("### Response:", 1)[1].strip()
-        return decoded.strip()
+        return _response_from_decoded(decoded)
 
     dataset = load_data(dataset_name, dataset_dir=dataset_dir)
     if max_examples is not None:
@@ -73,43 +81,66 @@ def eval_model(
 
     total = len(dataset)
     completed = _load_eval_progress(progress_path, total) if resume_progress else {}
-    correct = sum(1 for row in completed.values() if row.get("flag"))
-    completed_count = len(completed)
+    state = {
+        "correct": sum(1 for row in completed.values() if row.get("flag")),
+        "completed_count": len(completed),
+    }
 
-    with tqdm(total=total, initial=completed_count, desc=dataset_name) as progress:
-        for index, record in enumerate(dataset):
-            if index in completed:
-                continue
+    def record(index: int, prediction_text: str, progress) -> None:
+        record_value = dataset[index]
+        label = record_value.get("answer")
+        if dataset_name.lower() == "aqua":
+            prediction = extract_answer_letter(prediction_text)
+            is_correct = str(label) == prediction
+        else:
+            prediction = extract_answer_number(dataset_name, prediction_text)
+            is_correct = abs(float(label) - prediction) <= 0.001
 
-            prediction_text = generate(record.get("instruction", ""), record.get("input"))
-            label = record.get("answer")
-            if dataset_name.lower() == "aqua":
-                prediction = extract_answer_letter(prediction_text)
-                is_correct = str(label) == prediction
-            else:
-                prediction = extract_answer_number(dataset_name, prediction_text)
-                is_correct = abs(float(label) - prediction) <= 0.001
+        state["correct"] += int(is_correct)
+        state["completed_count"] += 1
+        accuracy = state["correct"] / state["completed_count"]
+        result = copy.deepcopy(record_value)
+        result.update(
+            output_pred=prediction_text,
+            pred=prediction,
+            flag=is_correct,
+            idx=index,
+            dataset=dataset_name,
+            total=total,
+        )
+        _append_eval_progress(progress_path, result)
+        if verbose:
+            print(f"\n{dataset_name} #{index}: prediction={prediction!r}, label={label!r}")
+            print(prediction_text)
+        progress.set_postfix(accuracy=f"{accuracy:.4f}")
+        progress.update(1)
 
-            correct += int(is_correct)
-            completed_count += 1
-            accuracy = correct / completed_count
-            result = copy.deepcopy(record)
-            result.update(
-                output_pred=prediction_text,
-                pred=prediction,
-                flag=is_correct,
-                idx=index,
-                dataset=dataset_name,
-                total=total,
-            )
-            _append_eval_progress(progress_path, result)
-            if verbose:
-                print(f"\n{dataset_name} #{index}: prediction={prediction!r}, label={label!r}")
-                print(prediction_text)
-            progress.set_postfix(accuracy=f"{accuracy:.4f}")
-            progress.update(1)
+    pending = [index for index in range(total) if index not in completed]
+    with tqdm(total=total, initial=state["completed_count"], desc=dataset_name) as progress:
+        if generation_batch_size <= 1:
+            for index in pending:
+                prediction_text = generate(dataset[index].get("instruction", ""), dataset[index].get("input"))
+                record(index, prediction_text, progress)
+        else:
+            previous_padding_side = getattr(tokenizer, "padding_side", "right")
+            tokenizer.padding_side = "left"
+            try:
+                for start in range(0, len(pending), generation_batch_size):
+                    chunk = pending[start : start + generation_batch_size]
+                    prompts = [
+                        generate_prompt(dataset[index].get("instruction", ""), dataset[index].get("input"))
+                        for index in chunk
+                    ]
+                    inputs = tokenizer(prompts, return_tensors="pt", padding=True)
+                    inputs = {name: tensor.to(device) for name, tensor in inputs.items()}
+                    output = _run_generation(model, inputs, tokenizer, num_beams, max_new_tokens)
+                    for row, index in enumerate(chunk):
+                        decoded = tokenizer.decode(output.sequences[row], skip_special_tokens=True)
+                        record(index, _response_from_decoded(decoded), progress)
+            finally:
+                tokenizer.padding_side = previous_padding_side
 
-    return correct / total if total else float("nan")
+    return state["correct"] / total if total else float("nan")
 
 
 def _load_eval_progress(progress_path: Optional[str], total: int) -> dict[int, dict]:

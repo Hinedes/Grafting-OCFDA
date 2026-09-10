@@ -27,6 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_examples", type=int, default=None)
     parser.add_argument("--max_new_tokens", type=int, default=256)
     parser.add_argument("--num_beams", type=int, default=4)
+    parser.add_argument("--generation_batch_size", type=int, default=1)
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument(
         "--resume_progress",
@@ -78,6 +79,7 @@ def main() -> None:
             verbose=args.verbose,
             progress_path=progress_path,
             resume_progress=resume_progress,
+            generation_batch_size=args.generation_batch_size,
         )
     scores["Average"] = sum(scores.values()) / len(scores)
 
