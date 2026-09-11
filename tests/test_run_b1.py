@@ -8,12 +8,27 @@ import pytest
 from fine_tuning.run_b1 import (
     EXPECTED_HELDOUT,
     paired_confirmatory_rows,
+    phase_window,
     prepare_artifacts,
     require_rocm,
     validate_eval_progress,
     validate_input_artifacts,
     validate_sanity_rows,
 )
+
+
+def test_phase_window_selects_inclusive_range() -> None:
+    assert phase_window("smoke_2batch", "confirmatory") == (
+        "smoke_2batch",
+        "sentinel",
+        "pilot",
+        "sanity",
+        "confirmatory",
+    )
+    assert phase_window("pilot", "sanity") == ("pilot", "sanity")
+    assert phase_window("sanity", "sanity") == ("sanity",)
+    with pytest.raises(ValueError):
+        phase_window("sanity", "pilot")
 
 REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

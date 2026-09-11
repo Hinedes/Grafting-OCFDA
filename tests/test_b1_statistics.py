@@ -4,9 +4,22 @@ from fine_tuning.b1_statistics import (
     B1_SUPPORT_SEEDS,
     B1_TRAINING_SEEDS,
     hierarchical_paired_bootstrap,
+    select_lr_per_method,
     select_shared_lr,
     stratified_example_bootstrap,
 )
+
+
+def test_per_method_lr_selection_can_differ() -> None:
+    rows = [
+        {"method": "ocfda-aligned", "lr": 1e-4, "lr_tuning": {"nll": 1.0}},
+        {"method": "ocfda-aligned", "lr": 5e-4, "lr_tuning": {"nll": 0.9}},
+        {"method": "ocfda-independent", "lr": 1e-4, "lr_tuning": {"nll": 0.8}},
+        {"method": "ocfda-independent", "lr": 5e-4, "lr_tuning": {"nll": 0.95}},
+    ]
+    selection = select_lr_per_method(rows)
+    assert selection["ocfda-aligned"]["selected_lr"] == 5e-4
+    assert selection["ocfda-independent"]["selected_lr"] == 1e-4
 
 
 def test_protocol_seed_sets_are_disjoint() -> None:

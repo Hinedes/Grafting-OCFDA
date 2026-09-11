@@ -28,10 +28,12 @@ try:
     from .evaluate import eval_model  # noqa: E402
     from .finetune import train  # noqa: E402
     from .ocfda import OCFDA_DEFAULT_K, OCFDA_PROJECTIONS
+    from .parallel_eval import evaluate_checkpoint_parallel  # noqa: E402
 except ImportError:
     from evaluate import eval_model  # noqa: E402
     from finetune import train  # noqa: E402
     from ocfda import OCFDA_DEFAULT_K, OCFDA_PROJECTIONS
+    from parallel_eval import evaluate_checkpoint_parallel  # noqa: E402
 
 
 FULL_LLAMA_TARGET_MODULES = [
@@ -1576,6 +1578,22 @@ def run_spec_once(
             if args.skip_accuracy_eval:
                 row["accuracy_eval_skipped"] = True
                 print("Skipping generation accuracy evaluation; computing NLL/PPL only.")
+            elif int(getattr(args, "parallel_eval_workers", 1)) > 1 and adapter_name == "ocfda":
+                scores = evaluate_checkpoint_parallel(
+                    checkpoint_dir=checkpoint_dir,
+                    datasets=datasets,
+                    dataset_dir=args.dataset_dir,
+                    out_dir=row["eval_progress_dir"],
+                    workers=int(args.parallel_eval_workers),
+                    max_examples=args.accuracy_max_examples,
+                    max_new_tokens=args.generation_max_new_tokens,
+                    num_beams=args.generation_num_beams,
+                )
+                for dataset in datasets:
+                    accuracy[dataset] = float(scores[dataset]) * 100.0
+                    print(f"{dataset} accuracy: {accuracy[dataset]:.4f}")
+                accuracy["Average"] = float(scores["Average"]) * 100.0
+                print(f"Average accuracy: {accuracy['Average']:.4f}")
             else:
                 for dataset in datasets:
                     progress_path = eval_progress_path(args.out_dir, spec, dataset)
@@ -2001,6 +2019,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=1,
         help="Prompts per batched generation call. 1 preserves the serial reference behavior.",
+    )
+    parser.add_argument(
+        "--parallel_eval_workers",
+        type=int,
+        default=1,
+        help="Fresh batch=1 checkpoint replicas per OCFDA full accuracy evaluation (1 = serial in-process).",
     )
     parser.add_argument("--verbose_generation_eval", action="store_true")
     parser.add_argument(

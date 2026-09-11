@@ -89,12 +89,7 @@ def eval_model(
     def record(index: int, prediction_text: str, progress) -> None:
         record_value = dataset[index]
         label = record_value.get("answer")
-        if dataset_name.lower() == "aqua":
-            prediction = extract_answer_letter(prediction_text)
-            is_correct = str(label) == prediction
-        else:
-            prediction = extract_answer_number(dataset_name, prediction_text)
-            is_correct = abs(float(label) - prediction) <= 0.001
+        prediction, is_correct = score_prediction(dataset_name, prediction_text, label)
 
         state["correct"] += int(is_correct)
         state["completed_count"] += 1
@@ -217,3 +212,15 @@ def extract_answer_letter(sentence: str) -> str:
         return explicit[-1].upper()
     matches = re.findall(r"\b([A-E])\b", sentence, flags=re.IGNORECASE)
     return matches[-1].upper() if matches else ""
+
+
+def score_prediction(dataset_name: str, prediction_text: str, label):
+    """Single source of truth for benchmark scoring used by serial and parallel evaluation."""
+
+    if dataset_name.lower() == "aqua":
+        prediction = extract_answer_letter(prediction_text)
+        is_correct = str(label) == prediction
+    else:
+        prediction = extract_answer_number(dataset_name, prediction_text)
+        is_correct = abs(float(label) - prediction) <= 0.001
+    return prediction, is_correct

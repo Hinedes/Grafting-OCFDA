@@ -21,7 +21,7 @@ try:
         B1_TRAINING_SEEDS,
         hierarchical_paired_bootstrap,
         load_eval_progress,
-        select_shared_lr,
+        select_lr_per_method,
         stratified_example_bootstrap,
         write_json,
     )
@@ -36,7 +36,7 @@ except ImportError:
         B1_TRAINING_SEEDS,
         hierarchical_paired_bootstrap,
         load_eval_progress,
-        select_shared_lr,
+        select_lr_per_method,
         stratified_example_bootstrap,
         write_json,
     )
@@ -83,6 +83,7 @@ B1_ALLOWED_TREE_CHANGES = {
     "fine_tuning/launch_math_methods.py",
     "fine_tuning/math_experiment_tables.py",
     "fine_tuning/ocfda.py",
+    "fine_tuning/parallel_eval.py",
     "fine_tuning/profile_efficiency.py",
     "fine_tuning/run_b1.py",
     "tests/test_b1_pipeline.py",
@@ -91,8 +92,11 @@ B1_ALLOWED_TREE_CHANGES = {
     "tests/test_data_integrity.py",
     "tests/test_evaluate_batching.py",
     "tests/test_ocfda.py",
+    "tests/test_parallel_eval.py",
     "tests/test_run_b1.py",
 }
+
+PHASES = ("smoke_2batch", "sentinel", "pilot", "sanity", "confirmatory")
 
 
 def code_artifact_paths(repo_dir: str) -> list[str]:
@@ -287,6 +291,8 @@ def _append_common_command(command: list[str], args: argparse.Namespace, heldout
             "PLACEHOLDER_CHECKPOINT",
             "--stop_on_error",
             "--no_resume_eval_progress",
+            "--parallel_eval_workers",
+            str(getattr(args, "parallel_eval_workers", 1)),
         ]
     )
     command.append("--bf16")
@@ -309,6 +315,39 @@ def validate_input_artifacts(args: argparse.Namespace, heldout_dir: str) -> None
     repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if sha256_tree(code_artifact_paths(repo_dir)) != manifest["code_artifacts"]["files"]:
         raise RuntimeError("B1 source code changed after the artifact manifest was written")
+
+
+def phase_window(start_from: str, stop_after: str) -> tuple[str, ...]:
+    if start_from not in PHASES:
+        raise ValueError(f"--start_from must be one of {PHASES}, got {start_from!r}")
+    if stop_after not in PHASES:
+        raise ValueError(f"--stop_after must be one of {PHASES}, got {stop_after!r}")
+    start_index = PHASES.index(start_from)
+    stop_index = PHASES.index(stop_after)
+    if start_index > stop_index:
+        raise ValueError(f"--start_from={start_from} is after --stop_after={stop_after}")
+    return PHASES[start_index : stop_index + 1]
+
+
+def phase_artifact_path(output_dir: str, phase: str) -> str:
+    mapping = {
+        "smoke_2batch": os.path.join(output_dir, "smoke_2batch", "results", "run_results.jsonl"),
+        "sentinel": os.path.join(output_dir, "sentinel", "lora_sentinel.json"),
+        "pilot": os.path.join(output_dir, "pilot", "lr_selection.json"),
+        "sanity": os.path.join(output_dir, "sanity", "results", "run_results.jsonl"),
+        "confirmatory": os.path.join(output_dir, "confirmatory", "results", "run_results.jsonl"),
+    }
+    return mapping[phase]
+
+
+def phase_complete(output_dir: str, phase: str) -> bool:
+    path = phase_artifact_path(output_dir, phase)
+    if not os.path.exists(path):
+        return False
+    if path.endswith(".jsonl"):
+        expected_rows = {"smoke_2batch": 2, "sanity": 2, "confirmatory": 18}[phase]
+        return len(read_jsonl(path)) == expected_rows
+    return os.path.getsize(path) > 0
 
 
 def run_phase(
@@ -399,7 +438,7 @@ def validate_eval_progress(progress: dict[str, list[dict]], label: str) -> None:
 def validate_ocfda_rows(
     rows: list[dict],
     expected_pairs: set[tuple[int, int]],
-    selected_lr: float,
+    selected_lrs: dict[str, float],
     artifact_manifest_sha256: str,
     label: str,
 ) -> None:
@@ -418,7 +457,9 @@ def validate_ocfda_rows(
     for row in rows:
         method = row["method"]
         geometry = "aligned" if method == "ocfda-aligned" else "independent"
-        if not math.isclose(float(row["lr"]), selected_lr, rel_tol=0.0, abs_tol=1e-12):
+        if geometry not in selected_lrs:
+            raise RuntimeError(f"{label} run {row.get('run_id')} has no selected learning rate for {geometry}")
+        if not math.isclose(float(row["lr"]), selected_lrs[geometry], rel_tol=0.0, abs_tol=1e-12):
             raise RuntimeError(f"{label} run {row.get('run_id')} used an unexpected learning rate")
         if (
             row.get("model") != MODEL_ID
@@ -522,7 +563,7 @@ def run_lora_sentinel(args: argparse.Namespace, heldout_dir: str) -> dict[str, o
     return sentinel
 
 
-def run_pilot(args: argparse.Namespace, heldout_dir: str) -> dict[str, object]:
+def run_pilot(args: argparse.Namespace, heldout_dir: str) -> dict[str, dict[str, object]]:
     out_dir = run_phase(
         args,
         heldout_dir,
@@ -552,8 +593,17 @@ def run_pilot(args: argparse.Namespace, heldout_dir: str) -> dict[str, object]:
     ]
     if invalid:
         raise RuntimeError(f"Pilot contains non-finite or incomplete validation NLL results: {invalid}")
-    selection = select_shared_lr(rows)
+    selection = select_lr_per_method(rows)
     write_json(os.path.join(args.output_dir, "pilot", "lr_selection.json"), selection)
+    return selection
+
+
+def load_pilot_selection(output_dir: str) -> dict[str, dict[str, object]]:
+    path = os.path.join(output_dir, "pilot", "lr_selection.json")
+    with open(path, "r", encoding="utf-8") as selection_file:
+        selection = json.load(selection_file)
+    if "ocfda-aligned" not in selection or "ocfda-independent" not in selection:
+        raise RuntimeError("Pilot selection predates the per-geometry amendment; rerun the pilot phase")
     return selection
 
 
@@ -605,83 +655,125 @@ def run(args: argparse.Namespace) -> None:
     args.output_dir = os.path.abspath(args.output_dir)
     args.train_data = os.path.abspath(args.train_data)
     args.benchmark_dir = os.path.abspath(args.benchmark_dir)
-    if os.path.exists(args.output_dir):
-        if not os.path.isdir(args.output_dir):
-            raise RuntimeError(f"B1 output path is not a directory: {args.output_dir}")
-        with os.scandir(args.output_dir) as entries:
-            if any(entries):
-                raise RuntimeError(f"B1 requires a fresh output directory: {args.output_dir}")
-    heldout_dir = prepare_artifacts(args)
-    run_phase(
-        args,
-        heldout_dir,
-        "smoke_2batch",
-        "ocfda-aligned,ocfda-independent",
-        f"{PRIMARY_LR:g}",
-        str(B1_PILOT_SEED),
-        str(B1_PILOT_SEED),
-        eval_all_lrs=True,
-        skip_accuracy_eval=True,
-        skip_lr_tuning_metric=True,
-        max_steps=2,
-        ppl_max_examples=2,
-        eval_step=1,
-        save_step=1,
-        max_runs=2,
-    )
-    run_lora_sentinel(args, heldout_dir)
-    selection = run_pilot(args, heldout_dir)
-    selected_lr = float(selection["selected_lr"])
-    sanity_dir = run_phase(
-        args,
-        heldout_dir,
-        "sanity",
-        "ocfda-aligned,ocfda-independent",
-        f"{selected_lr:g}",
-        "2001",
-        "1001",
-        eval_all_lrs=True,
-    )
-    sanity_rows = read_jsonl(os.path.join(sanity_dir, "run_results.jsonl"))
-    validate_sanity_rows(sanity_rows)
-    manifest_sha256 = sha256_file(os.path.join(args.output_dir, "artifact_manifest.json"))
-    validate_ocfda_rows(
-        sanity_rows,
-        {(1001, 2001)},
-        selected_lr,
-        manifest_sha256,
-        "Sanity",
-    )
-    confirmatory_dir = run_phase(
-        args,
-        heldout_dir,
-        "confirmatory",
-        "ocfda-aligned,ocfda-independent",
-        f"{selected_lr:g}",
-        ",".join(map(str, B1_TRAINING_SEEDS)),
-        ",".join(map(str, B1_SUPPORT_SEEDS)),
-        eval_all_lrs=True,
-    )
-    rows = read_jsonl(os.path.join(confirmatory_dir, "run_results.jsonl"))
-    validate_ocfda_rows(
-        rows,
-        {(support, training) for support in B1_SUPPORT_SEEDS for training in B1_TRAINING_SEEDS},
-        selected_lr,
-        manifest_sha256,
-        "Confirmatory",
-    )
-    paired = paired_confirmatory_rows(rows)
-    statistics = hierarchical_paired_bootstrap(
-        paired,
-        repetitions=B1_BOOTSTRAP_REPLICATES,
-        seed=B1_BOOTSTRAP_SEED,
-    )
-    statistics["paired_runs"] = paired
-    statistics["selected_lr"] = selected_lr
-    statistics["sanity_pair"] = {"support_seed": 1001, "training_seed": 2001}
-    write_json(os.path.join(args.output_dir, "b1_statistics.json"), statistics)
-    if not statistics["supported"]:
-        raise SystemExit("B1 confirmatory criteria were not all met.")
+    phases = phase_window(args.start_from, args.stop_after)
+    print("B1 phases:", phases)
+
+    manifest_path = os.path.join(args.output_dir, "artifact_manifest.json")
+    if os.path.exists(manifest_path):
+        heldout_dir = os.path.join(args.output_dir, "heldout_dataset")
+        validate_input_artifacts(args, heldout_dir)
+        print("Resuming existing B1 output:", args.output_dir)
+    else:
+        if os.path.exists(args.output_dir):
+            if not os.path.isdir(args.output_dir):
+                raise RuntimeError(f"B1 output path is not a directory: {args.output_dir}")
+            with os.scandir(args.output_dir) as entries:
+                if any(entries):
+                    raise RuntimeError(f"B1 requires a fresh output directory: {args.output_dir}")
+        heldout_dir = prepare_artifacts(args)
+
+    if "smoke_2batch" in phases and not phase_complete(args.output_dir, "smoke_2batch"):
+        run_phase(
+            args,
+            heldout_dir,
+            "smoke_2batch",
+            "ocfda-aligned,ocfda-independent",
+            f"{PRIMARY_LR:g}",
+            str(B1_PILOT_SEED),
+            str(B1_PILOT_SEED),
+            eval_all_lrs=True,
+            skip_accuracy_eval=True,
+            skip_lr_tuning_metric=True,
+            max_steps=2,
+            ppl_max_examples=2,
+            eval_step=1,
+            save_step=1,
+            max_runs=2,
+        )
+    elif "smoke_2batch" in phases:
+        print("smoke_2batch already complete; skipping")
+
+    if "sentinel" in phases and not phase_complete(args.output_dir, "sentinel"):
+        run_lora_sentinel(args, heldout_dir)
+    elif "sentinel" in phases:
+        print("sentinel already complete; skipping")
+
+    selection = None
+    if "pilot" in phases:
+        if phase_complete(args.output_dir, "pilot"):
+            print("pilot already complete; loading selection")
+            selection = load_pilot_selection(args.output_dir)
+        else:
+            selection = run_pilot(args, heldout_dir)
+    if selection is None and phase_complete(args.output_dir, "pilot"):
+        selection = load_pilot_selection(args.output_dir)
+    if selection is None and ("sanity" in phases or "confirmatory" in phases):
+        raise RuntimeError("Pilot LR selection is required before sanity or confirmatory phases")
+
+    selected_lrs = None
+    if selection is not None:
+        selected_lrs = {
+            "aligned": float(selection["ocfda-aligned"]["selected_lr"]),
+            "independent": float(selection["ocfda-independent"]["selected_lr"]),
+        }
+        print("Selected LRs:", selected_lrs)
+
+    if "sanity" in phases:
+        if not phase_complete(args.output_dir, "sanity"):
+            run_phase(
+                args, heldout_dir, "sanity", "ocfda-aligned",
+                f"{selected_lrs['aligned']:g}", "2001", "1001", eval_all_lrs=True,
+            )
+            run_phase(
+                args, heldout_dir, "sanity", "ocfda-independent",
+                f"{selected_lrs['independent']:g}", "2001", "1001", eval_all_lrs=True,
+            )
+        sanity_rows = read_jsonl(phase_artifact_path(args.output_dir, "sanity"))
+        validate_sanity_rows(sanity_rows)
+        validate_ocfda_rows(
+            sanity_rows,
+            {(1001, 2001)},
+            selected_lrs,
+            sha256_file(manifest_path),
+            "Sanity",
+        )
+
+    if "confirmatory" in phases:
+        if not phase_complete(args.output_dir, "confirmatory"):
+            run_phase(
+                args, heldout_dir, "confirmatory", "ocfda-aligned",
+                f"{selected_lrs['aligned']:g}",
+                ",".join(map(str, B1_TRAINING_SEEDS)),
+                ",".join(map(str, B1_SUPPORT_SEEDS)),
+                eval_all_lrs=True,
+            )
+            run_phase(
+                args, heldout_dir, "confirmatory", "ocfda-independent",
+                f"{selected_lrs['independent']:g}",
+                ",".join(map(str, B1_TRAINING_SEEDS)),
+                ",".join(map(str, B1_SUPPORT_SEEDS)),
+                eval_all_lrs=True,
+            )
+        rows = read_jsonl(phase_artifact_path(args.output_dir, "confirmatory"))
+        validate_ocfda_rows(
+            rows,
+            {(support, training) for support in B1_SUPPORT_SEEDS for training in B1_TRAINING_SEEDS},
+            selected_lrs,
+            sha256_file(manifest_path),
+            "Confirmatory",
+        )
+        paired = paired_confirmatory_rows(rows)
+        statistics = hierarchical_paired_bootstrap(
+            paired,
+            repetitions=B1_BOOTSTRAP_REPLICATES,
+            seed=B1_BOOTSTRAP_SEED,
+        )
+        statistics["paired_runs"] = paired
+        statistics["selected_lrs"] = selected_lrs
+        statistics["sanity_pair"] = {"support_seed": 1001, "training_seed": 2001}
+        write_json(os.path.join(args.output_dir, "b1_statistics.json"), statistics)
+        if not statistics["supported"]:
+            raise SystemExit("B1 confirmatory criteria were not all met.")
 
 
 def parse_args() -> argparse.Namespace:
@@ -690,6 +782,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output_dir", default="runs/b1")
     parser.add_argument("--train_data", default=str(repo_dir / "fine_tuning" / "ft-training_set" / "math_17k.json"))
     parser.add_argument("--benchmark_dir", default=str(repo_dir / "fine_tuning" / "dataset"))
+    parser.add_argument("--start_from", choices=list(PHASES), default="smoke_2batch")
+    parser.add_argument("--stop_after", choices=list(PHASES), default="confirmatory")
+    parser.add_argument(
+        "--parallel_eval_workers",
+        type=int,
+        default=2,
+        help="Fresh batch=1 checkpoint replicas per OCFDA full evaluation (1 = serial).",
+    )
     return parser.parse_args()
 
 
