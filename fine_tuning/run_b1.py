@@ -79,6 +79,7 @@ B1_ALLOWED_TREE_CHANGES = {
     "fine_tuning/data_integrity.py",
     "fine_tuning/evaluate.py",
     "fine_tuning/evaluate_checkpoint.py",
+    "fine_tuning/evaluate_pilot_winners.py",
     "fine_tuning/finetune.py",
     "fine_tuning/launch_math_methods.py",
     "fine_tuning/math_experiment_tables.py",
