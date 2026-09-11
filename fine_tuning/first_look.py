@@ -45,7 +45,7 @@ def main() -> None:
     args = parse_args()
     name = args.phase_name or "first_look_" + args.method.split("-")[-1]
     run_args = argparse.Namespace(
-        output_dir=os.path.abspath(args.output_dir),
+        output_dir=os.path.abspath(os.path.expanduser(args.output_dir)),
         train_data=str(Path(__file__).resolve().parents[1] / "fine_tuning" / "ft-training_set" / "math_17k.json"),
         benchmark_dir=str(Path(__file__).resolve().parents[1] / "fine_tuning" / "dataset"),
         parallel_eval_workers=args.parallel_eval_workers,
