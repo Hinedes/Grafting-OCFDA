@@ -80,6 +80,7 @@ B1_ALLOWED_TREE_CHANGES = {
     "fine_tuning/evaluate.py",
     "fine_tuning/evaluate_checkpoint.py",
     "fine_tuning/evaluate_pilot_winners.py",
+    "fine_tuning/first_look.py",
     "fine_tuning/finetune.py",
     "fine_tuning/launch_math_methods.py",
     "fine_tuning/math_experiment_tables.py",
@@ -147,15 +148,15 @@ def git_blob_sha(path: str) -> str:
     return hashlib.sha1(header + value).hexdigest()
 
 
-def require_rocm() -> None:
+def require_rocm(allow_cuda: bool = False) -> None:
     try:
         import torch
     except ImportError as exc:
         raise RuntimeError("B1 requires the project PyTorch environment") from exc
     if not torch.cuda.is_available():
         raise RuntimeError("B1 requires a GPU; refusing to run the protocol on CPU")
-    if getattr(getattr(torch, "version", None), "hip", None) is None:
-        raise RuntimeError("B1 requires a ROCm/HIP PyTorch build")
+    if getattr(getattr(torch, "version", None), "hip", None) is None and not allow_cuda:
+        raise RuntimeError("B1 requires a ROCm/HIP PyTorch build; pass --allow_cuda to override")
 
 
 def prepare_artifacts(args: argparse.Namespace) -> str:
@@ -652,7 +653,7 @@ def validate_sanity_rows(rows: list[dict]) -> None:
 
 
 def run(args: argparse.Namespace) -> None:
-    require_rocm()
+    require_rocm(getattr(args, "allow_cuda", False))
     args.output_dir = os.path.abspath(args.output_dir)
     args.train_data = os.path.abspath(args.train_data)
     args.benchmark_dir = os.path.abspath(args.benchmark_dir)
@@ -783,6 +784,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output_dir", default="runs/b1")
     parser.add_argument("--train_data", default=str(repo_dir / "fine_tuning" / "ft-training_set" / "math_17k.json"))
     parser.add_argument("--benchmark_dir", default=str(repo_dir / "fine_tuning" / "dataset"))
+    parser.add_argument(
+        "--allow_cuda",
+        action="store_true",
+        help="Permit an NVIDIA CUDA PyTorch build (default: ROCm/HIP only).",
+    )
     parser.add_argument("--start_from", choices=list(PHASES), default="smoke_2batch")
     parser.add_argument("--stop_after", choices=list(PHASES), default="confirmatory")
     parser.add_argument(

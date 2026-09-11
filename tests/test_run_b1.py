@@ -80,6 +80,15 @@ def test_sanity_rows_reject_duplicates() -> None:
         validate_sanity_rows(rows + [rows[0]])
 
 
+def test_allow_cuda_override_permits_nvidia_builds(monkeypatch) -> None:
+    nvidia = SimpleNamespace(
+        cuda=SimpleNamespace(is_available=lambda: True),
+        version=SimpleNamespace(hip=None, cuda="12.4"),
+    )
+    monkeypatch.setitem(sys.modules, "torch", nvidia)
+    require_rocm(allow_cuda=True)
+
+
 def test_b1_requires_rocm_and_accepts_the_torch_cuda_compatibility_api(monkeypatch) -> None:
     no_hip = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True), version=SimpleNamespace(hip=None))
     monkeypatch.setitem(sys.modules, "torch", no_hip)
