@@ -961,6 +961,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    # Mirror run_b1: absolute gate paths. The pipeline re-joins save_pretrained
+    # outputs onto output_dir, which doubles relative paths (B1 always abspaths).
+    args.gate_output_dir = os.path.abspath(args.gate_output_dir)
+    if args.b1_output_dir:
+        args.b1_output_dir = os.path.abspath(args.b1_output_dir)
     if args.command in {"run", "summarize", "export"} and not args.b1_output_dir:
         raise SystemExit("--b1_output_dir (read-only B1 run) is required")
     if args.command == "plan" and not args.b1_output_dir:
