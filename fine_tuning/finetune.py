@@ -173,11 +173,9 @@ def train(
     if adapter_name == "ocfda":
         target_modules = list(OCFDA_PROJECTIONS)
         if not artifact_manifest_path:
-            raise ValueError("B1 OCFDA requires an artifact manifest")
+            raise ValueError("OCFDA requires an artifact manifest")
         if optimizer_name.lower() != "adamw" or weight_decay != 0.0:
-            raise ValueError("B1 OCFDA fixes AdamW with zero weight decay")
-        if ocfda_k != 57:
-            raise ValueError("B1 OCFDA fixes k=57")
+            raise ValueError("OCFDA fixes AdamW with zero weight decay")
     if mask_choice is None:
         mask_choice = "random" if random_indices else "super"
     if not (
@@ -259,15 +257,20 @@ def train(
         artifact_manifest = json.loads(manifest_bytes)
         artifact_manifest_sha256 = sha256(manifest_bytes).hexdigest()
     if adapter_name == "ocfda" and (
-        artifact_manifest is None or artifact_manifest.get("protocol") != "B1-OCFDA"
+        artifact_manifest is None
+        or artifact_manifest.get("protocol") not in {"B1-OCFDA", "B2-OCFDA"}
     ):
-        raise ValueError("B1 OCFDA requires a B1 artifact manifest")
+        raise ValueError("OCFDA requires a matching artifact manifest")
     if adapter_name == "ocfda" and (
         artifact_manifest.get("model") != base_model
         or artifact_manifest.get("model_revision") != model_revision
         or artifact_manifest.get("tokenizer_revision") != (tokenizer_revision or model_revision)
     ):
-        raise ValueError("B1 OCFDA training arguments do not match the artifact manifest model pin")
+        raise ValueError("OCFDA training arguments do not match the artifact manifest model pin")
+    if adapter_name == "ocfda":
+        expected_k = int(artifact_manifest.get("ocfda_k", 57))
+        if int(ocfda_k) != expected_k:
+            raise ValueError(f"OCFDA k must match the artifact manifest ({ocfda_k} != {expected_k})")
     gradient_accumulation_steps = batch_size // micro_batch_size
 
     device_map = "auto"
@@ -641,7 +644,7 @@ def train(
         if adapter_name == "ocfda":
             metadata.update(
                 {
-                    "protocol": "B1-OCFDA",
+                    "protocol": artifact_manifest.get("protocol", "B1-OCFDA"),
                     "geometry": ocfda_geometry,
                     "support_seed": int(support_seed),
                     "ocfda_k": int(ocfda_k),

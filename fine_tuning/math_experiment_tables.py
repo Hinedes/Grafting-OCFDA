@@ -46,6 +46,12 @@ FULL_LLAMA_TARGET_MODULES = [
     "down_proj",
 ]
 
+OCFDA_ARCH_PROFILES = {
+    # (num_hidden_layers, hidden_size, intermediate_size, num_attention_heads, num_key_value_heads, head_dim)
+    "meta-llama/Llama-3.2-1B": (16, 2048, 8192, 32, 8, 64),
+    "meta-llama/Llama-3.2-3B": (28, 3072, 8192, 24, 8, 128),
+}
+
 LEGACY_TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "up_proj", "down_proj"]
 OCFDA_TARGET_MODULES = list(OCFDA_PROJECTIONS)
 MATH_BENCHMARKS = ["AddSub", "MultiArith", "SingleEq", "gsm8k", "AQuA", "SVAMP"]
@@ -643,17 +649,25 @@ def build_budget_plan(args, spec: RunSpec, target_modules: List[str]) -> dict:
     elif adapter_name == "ocfda":
         if tuple(target_modules) != tuple(FULL_LLAMA_TARGET_MODULES):
             raise ValueError("OCFDA budget planning expects the seven-projection LoRA reference target set.")
-        if (
-            int(config.num_hidden_layers) != 16
-            or int(config.hidden_size) != 2048
-            or int(config.intermediate_size) != 8192
-            or int(config.num_attention_heads) != 32
-            or int(getattr(config, "num_key_value_heads", config.num_attention_heads)) != 8
-            or int(getattr(config, "head_dim", 64)) != 64
-        ):
+        profile = OCFDA_ARCH_PROFILES.get(spec.model)
+        if profile is None:
             raise ValueError(
-                "OCFDA B1 is frozen to the Llama-3.2-1B GQA dimensions: "
-                "16 layers, hidden 2048, intermediate 8192, heads 32, KV heads 8, head_dim 64."
+                f"OCFDA budget planning is not frozen for model {spec.model}; "
+                f"supported models: {sorted(OCFDA_ARCH_PROFILES)}"
+            )
+        head_dim = int(getattr(config, "head_dim", int(config.hidden_size) // int(config.num_attention_heads)))
+        observed = (
+            int(config.num_hidden_layers),
+            int(config.hidden_size),
+            int(config.intermediate_size),
+            int(config.num_attention_heads),
+            int(getattr(config, "num_key_value_heads", config.num_attention_heads)),
+            head_dim,
+        )
+        if observed != profile:
+            raise ValueError(
+                f"OCFDA architecture for {spec.model} does not match the frozen profile: "
+                f"observed={observed}, expected={profile}"
             )
         target_dense_params = sum(
             int(config.hidden_size) * int(config.intermediate_size) for _ in range(3 * int(config.num_hidden_layers))
@@ -1763,11 +1777,11 @@ def run(args) -> None:
         raise ValueError("--budget_tolerance_pct must be nonnegative.")
     if args.ppl_eval_batch_size <= 0:
         raise ValueError("--ppl_eval_batch_size must be positive.")
-    if any(parse_method(method)[0] == "ocfda" for method in parse_csv_list(args.methods, str)) and args.ocfda_k != OCFDA_DEFAULT_K:
-        raise ValueError(f"B1 OCFDA fixes --ocfda_k={OCFDA_DEFAULT_K}")
+    if any(parse_method(method)[0] == "ocfda" for method in parse_csv_list(args.methods, str)) and args.ocfda_k <= 0:
+        raise ValueError("--ocfda_k must be positive")
     if any(parse_method(method)[0] == "ocfda" for method in parse_csv_list(args.methods, str)):
         if args.optimizer_name.lower() != "adamw" or args.weight_decay != 0.0:
-            raise ValueError("B1 OCFDA fixes AdamW with zero weight decay")
+            raise ValueError("OCFDA fixes AdamW with zero weight decay")
     if not args.eval_all_lrs and args.skip_lr_tuning_metric:
         raise ValueError("--skip_lr_tuning_metric cannot be used with selected-only evaluation.")
     if any(parse_method(method)[1].startswith("full-delta") for method in parse_csv_list(args.methods, str)):

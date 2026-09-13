@@ -1,0 +1,107 @@
+{
+  "protocol": "second-setting-v1",
+  "status": "FROZEN - edits require a new run directory; the runner refuses a changed manifest",
+  "question": "Was the OCFDA geometry/competitive result specific to Llama-3.2-1B?",
+  "scope_notes": [
+    "Only the host model changes relative to the completed 1B competitive gate.",
+    "Task, training snapshot, held-out suite (805 examples), validation split, evaluator, and generation settings transfer unchanged.",
+    "No LR search: all three methods use the transferred 5e-4 selected in setting 1.",
+    "Nine full trainings: 3 methods x 3 matched configurations; no selection phase."
+  ],
+  "model": {
+    "model_id": "meta-llama/Llama-3.2-3B",
+    "model_revision": "13afe5124825b4f3751f836b40dafda64c1ed062",
+    "tokenizer_revision": "13afe5124825b4f3751f836b40dafda64c1ed062"
+  },
+  "architecture": {
+    "num_hidden_layers": 28,
+    "hidden_size": 3072,
+    "intermediate_size": 8192,
+    "num_attention_heads": 24,
+    "num_key_value_heads": 8,
+    "head_dim": 128
+  },
+  "budget": {
+    "reference_lora_r": 8,
+    "reference_lora_params": 12156928,
+    "target_dense_params_all7": 2818572288,
+    "tolerance_pct": 3.0,
+    "ocfda_k": 47,
+    "ocfda_params": 12128256,
+    "ocfda_budget_error_pct": -0.2358,
+    "ocfda_k_selection_rule": "integer k minimizing |3*layers*k*hidden - reference_lora_params|; k=47 frozen",
+    "ocfda_k_candidates_pct": {"44": -6.6038, "45": -4.4811, "46": -2.3585, "47": -0.2358, "48": 1.8868, "49": 4.0094},
+    "super_expected_params": 12157124,
+    "super_expected_error_pct": 0.0016,
+    "super_budget_rule": "same rank-equivalent sparse policy as setting 1: Wanda-BottomK mask sized by reference_lora_params/target_dense_params per matrix",
+    "budget_source": "arithmetic from the frozen architecture block; cross-checked against AutoConfig on the run host"
+  },
+  "fixed_training": {
+    "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    "lora_r": 8,
+    "batch_size": 16,
+    "micro_batch_size": 16,
+    "num_epochs": 3,
+    "cutoff_len": 256,
+    "warmup_steps": 100,
+    "val_set_size": 120,
+    "val_split_seed": 42
+  },
+  "frozen_eval": {
+    "benchmarks": ["AddSub", "MultiArith", "SingleEq", "gsm8k", "AQuA", "SVAMP"],
+    "generation_max_new_tokens": 256,
+    "generation_num_beams": 4,
+    "generation_batch_size": 1
+  },
+  "paths": {
+    "train_data": "fine_tuning/ft-training_set/math_17k.json",
+    "benchmark_dir": "fine_tuning/dataset",
+    "run_dir": "runs/second-setting"
+  },
+  "runs": {
+    "lr": 0.0005,
+    "ocfda-aligned": {
+      "adapter": "ocfda",
+      "geometry": "aligned",
+      "optimizer": {"name": "adamw", "weight_decay": 0.0},
+      "pairs": [[1001, 2001], [1002, 2002], [1003, 2003]]
+    },
+    "ocfda-independent": {
+      "adapter": "ocfda",
+      "geometry": "independent",
+      "optimizer": {"name": "adamw", "weight_decay": 0.0},
+      "pairs": [[1001, 2001], [1002, 2002], [1003, 2003]]
+    },
+    "super-bottom": {
+      "adapter": "super",
+      "method": "super-bottom",
+      "optimizer": {"name": "adam", "weight_decay": 0.0},
+      "calibration": {"data": "c4", "nsamples": 128, "seed": 228},
+      "train_seeds": [2001, 2002, 2003]
+    }
+  },
+  "interpretation": {
+    "geometry_transfer": "PASS (descriptive) if aligned mean > independent mean AND aligned wins >= 2/3 matched configurations; 3/3 is strong replication. FAIL otherwise.",
+    "competitiveness": "PASS if aligned mean is within 2.0 pp of the Super-BottomK mean or better.",
+    "independence": "Two independent questions; 'geometry transfers, competitiveness does not' is a legitimate reported outcome, not a goalpost move."
+  },
+  "resource_expectations": {
+    "basis": "extrapolated from 1B measured runs: train 393-451 s; eval wall 1270-1680 s; peak VRAM 21.4-24.0 GB; scaled by ~3x FLOPs and ~2.16x parameter count",
+    "train_sec_per_run": [1200, 1400],
+    "eval_sec_per_run_serial": [4000, 5300],
+    "eval_sec_per_run_ocfda_parallel2": [2000, 2700],
+    "per_ocfda_run_minutes": [55, 70],
+    "per_super_run_minutes": [85, 115],
+    "total_block_hours": [10, 14],
+    "peak_vram_gb_estimate": [40, 56],
+    "recommended_vram_gb": 80,
+    "model_download_gb": 6.5,
+    "checkpoint_bytes_estimate": {"ocfda": [110000000, 160000000], "super": [280000000, 340000000]}
+  },
+  "provenance_notes": [
+    "Baseline optimizer recipes match setting 1 (OCFDA AdamW/wd0, Super Adam/wd0 per the Super-Tuning paper).",
+    "Super calibration policy matches setting 1 (C4, 128 samples, seed 228, Wanda-BottomK).",
+    "The 3B checkpoint metadata protocol is B2-OCFDA; the 1B B1-OCFDA protocol is untouched.",
+    "Interpretation is predeclared before any 3B training."
+  ]
+}

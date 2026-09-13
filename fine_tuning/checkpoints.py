@@ -32,11 +32,18 @@ B1_TRAIN_BLOB_SHA = "e72c024ec9957e8f7e67d2478450ac8851b666a7"
 B1_OCFDA_K = 57
 B1_OCFDA_SUPPORT_SEEDS = {9001, 1001, 1002, 1003}
 B1_OCFDA_TRAINING_SEEDS = {9001, 2001, 2002, 2003}
+SECOND_SETTING_PROTOCOL = "B2-OCFDA"
+SECOND_SETTING_MODEL_ID = "meta-llama/Llama-3.2-3B"
+SECOND_SETTING_MODEL_REVISION = "13afe5124825b4f3751f836b40dafda64c1ed062"
+SECOND_SETTING_OCFDA_K = 47
 
 
 def _validate_b1_provenance(
     metadata: dict[str, Any], checkpoint_dir: str, requested_base_model: Optional[str]
 ) -> None:
+    if metadata.get("protocol") == SECOND_SETTING_PROTOCOL:
+        _validate_second_setting_provenance(metadata, checkpoint_dir, requested_base_model)
+        return
     if metadata.get("protocol") != B1_PROTOCOL:
         return
     expected = {
@@ -106,6 +113,41 @@ def _validate_b1_provenance(
         artifact = manifest[key]
         if sha256_tree([artifact["path"]]) != artifact["files"]:
             raise RuntimeError(f"B1 {key} does not match its artifact manifest")
+
+
+def _validate_second_setting_provenance(
+    metadata: dict[str, Any], checkpoint_dir: str, requested_base_model: Optional[str]
+) -> None:
+    expected = {
+        "base_model": SECOND_SETTING_MODEL_ID,
+        "model_revision": SECOND_SETTING_MODEL_REVISION,
+        "tokenizer_revision": SECOND_SETTING_MODEL_REVISION,
+    }
+    for key, value in expected.items():
+        if metadata.get(key) != value:
+            raise RuntimeError(f"Second-setting checkpoint has invalid {key}: {metadata.get(key)!r}")
+    if requested_base_model and requested_base_model != SECOND_SETTING_MODEL_ID:
+        raise RuntimeError("Second-setting checkpoint cannot be loaded with a different base model")
+    if int(metadata.get("ocfda_k", -1)) != SECOND_SETTING_OCFDA_K:
+        raise RuntimeError(f"Second-setting checkpoint does not carry the frozen k={SECOND_SETTING_OCFDA_K}")
+    manifest_path = os.path.join(checkpoint_dir, "artifact_manifest.json")
+    if not os.path.isfile(manifest_path):
+        raise RuntimeError("Second-setting checkpoint is missing its artifact manifest copy")
+    with open(manifest_path, "rb") as manifest_file:
+        manifest = json.loads(manifest_file.read())
+    if (
+        manifest.get("protocol") != SECOND_SETTING_PROTOCOL
+        or manifest.get("model") != SECOND_SETTING_MODEL_ID
+        or manifest.get("model_revision") != SECOND_SETTING_MODEL_REVISION
+    ):
+        raise RuntimeError("Second-setting artifact manifest does not match the frozen protocol or model")
+    tokenizer_files = metadata.get("tokenizer_files")
+    if not isinstance(tokenizer_files, dict) or not tokenizer_files:
+        raise RuntimeError("Second-setting checkpoint is missing tokenizer file hashes")
+    for relative_path, expected_digest in tokenizer_files.items():
+        path = os.path.join(checkpoint_dir, *str(relative_path).split("/"))
+        if not os.path.isfile(path) or sha256_file(path) != expected_digest:
+            raise RuntimeError(f"Second-setting tokenizer artifact does not match checkpoint metadata: {relative_path}")
 
 
 def _validate_b1_host_metadata(metadata: dict[str, Any]) -> dict[str, str]:
@@ -191,8 +233,8 @@ def load_checkpoint(
     metadata = load_metadata(checkpoint_dir)
     adapter_name = metadata.get("adapter_name")
     method = metadata.get("method", adapter_name)
-    if adapter_name == "ocfda" and metadata.get("protocol") != B1_PROTOCOL:
-        raise RuntimeError("OCFDA checkpoints require the frozen B1 protocol metadata")
+    if adapter_name == "ocfda" and metadata.get("protocol") not in {B1_PROTOCOL, SECOND_SETTING_PROTOCOL}:
+        raise RuntimeError("OCFDA checkpoints require a frozen protocol metadata")
     _validate_b1_provenance(metadata, checkpoint_dir, base_model)
     base_model = base_model or metadata.get("base_model")
     if not base_model:
@@ -259,7 +301,7 @@ def load_checkpoint(
                 or metadata.get("geometry")
                 != ("aligned" if metadata.get("method") == "ocfda-aligned" else "independent")
                 or metadata.get("target_modules") != ["gate_proj", "up_proj", "down_proj"]
-                or metadata.get("ocfda_k") != B1_OCFDA_K
+                or (metadata.get("protocol") == B1_PROTOCOL and metadata.get("ocfda_k") != B1_OCFDA_K)
                 or int(metadata.get("support_seed", -1)) not in B1_OCFDA_SUPPORT_SEEDS
                 or int(metadata.get("training_seed", -1)) not in B1_OCFDA_TRAINING_SEEDS
                 or metadata.get("optimizer_name") != "adamw"
