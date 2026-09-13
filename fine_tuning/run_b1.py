@@ -96,6 +96,7 @@ B1_ALLOWED_TREE_CHANGES = {
     "tests/test_competitive_gate.py",
     "tests/test_data_integrity.py",
     "tests/test_evaluate_batching.py",
+    "tests/test_finetune_artifacts.py",
     "tests/test_ocfda.py",
     "tests/test_parallel_eval.py",
     "tests/test_run_b1.py",

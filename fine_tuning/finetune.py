@@ -60,6 +60,21 @@ except ImportError:
 SUPPORTED_ADAPTERS = {"lora", "sift", "super", "supra", "ocfda", "no"}
 
 
+def resolve_artifact_path(path, output_dir):
+    """Resolve a path returned by ``save_pretrained`` relative to ``output_dir``.
+
+    Save implementations may return basenames, output-dir-relative paths, or
+    absolute paths. Use the returned path directly when it already exists;
+    otherwise treat it as relative to ``output_dir``. This prevents the
+    historical doubling bug where an output-dir-prefixed relative path was
+    joined onto ``output_dir`` a second time.
+    """
+    path = os.fspath(path)
+    if os.path.exists(path):
+        return path
+    return os.path.join(output_dir, path)
+
+
 def compute_sparse_rate(model, target_modules):
     def is_in_target_modules(_name, additional_weights="values"):
         if additional_weights in _name or "graft_delta" in _name:
@@ -595,9 +610,7 @@ def train(
         tokenizer_files = tokenizer.save_pretrained(output_dir) or ()
         tokenizer_artifacts = {}
         for tokenizer_file in tokenizer_files:
-            tokenizer_file = os.fspath(tokenizer_file)
-            if not os.path.isabs(tokenizer_file):
-                tokenizer_file = os.path.join(output_dir, tokenizer_file)
+            tokenizer_file = resolve_artifact_path(tokenizer_file, output_dir)
             relative_path = os.path.relpath(tokenizer_file, output_dir).replace(os.sep, "/")
             tokenizer_artifacts[relative_path] = sha256_file(tokenizer_file)
         if adapter_name == "ocfda" and artifact_manifest is not None:
