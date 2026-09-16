@@ -3,16 +3,14 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "super-tuning"
+name = "grafting-ocfda"
 version = "0.1.0"
-description = "Activation-aware sparse and hybrid low-rank fine-tuning for LLMs"
+description = "Experimental implementation of Grafting using Ownership-Constrained FFN Delta Adaptation (OCFDA)"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 license = {file = "LICENSE"}
 authors = [
-  {name = "Ivan Ilin"},
-  {name = "Philip Zmushko"},
-  {name = "Peter Richtarik"},
+  {name = "Amantur Saliev"},
 ]
 dependencies = [
   "accelerate>=1.3,<1.4",
@@ -40,7 +38,7 @@ dev = [
 ]
 
 [project.urls]
-Repository = "https://github.com/vectozavr/SuperTuning"
+Repository = "https://github.com/Hinedes/Grafting-OCFDA"
 
 [project.scripts]
 supertuning-math = "fine_tuning.math_experiment_tables:main"
