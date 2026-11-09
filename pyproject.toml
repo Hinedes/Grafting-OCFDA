@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "grafting-ocfda"
 version = "0.1.0"
-description = "Experimental implementation of Grafting using Ownership-Constrained FFN Delta Adaptation (OCFDA)"
+description = "Activation-aware sparse and hybrid low-rank fine-tuning for LLMs"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 license = {file = "LICENSE"}

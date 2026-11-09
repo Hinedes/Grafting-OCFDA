@@ -79,3 +79,38 @@ The evidence is limited to one model/task setting with three final replicates pe
 ## Next
 
 The next block repeats the comparison on Llama-3.2-3B while keeping the task and evaluation protocol fixed.
+
+## Installation
+
+The B1 target uses Python 3.10 or 3.11, PyTorch 2.5/2.6, and an AMD MI300X with a ROCm/HIP PyTorch build. Legacy RoSA additionally requires Linux/CUDA because it uses bitsandbytes.
+
+```bash
+git clone https://github.com/Hinedes/Grafting-OCFDA.git
+cd Grafting-OCFDA
+
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[tracking,analysis]"
+```
+
+Request access to the gated Meta Llama checkpoints and authenticate with Hugging Face before running the examples. C4 calibration is downloaded through `datasets`; set `HF_HOME` and `HF_DATASETS_CACHE` when cluster storage requires a specific cache location.
+
+Install the optional `[rosa]` extra only for the legacy Linux/CUDA RoSA path.
+
+For development:
+
+```bash
+python -m pip install -e ".[dev,rosa,tracking,analysis]"
+pytest
+```
+
+## B1 OCFDA experiment
+
+The frozen B1 handoff is executable through `grafting-b1`. It materializes the instruction-disjoint Math17K benchmark subsets, hashes the pinned artifacts, runs the two-step smoke run, gates on the clean Base/LoRA sentinel, selects one shared OCFDA learning rate from the reserved pilot, and then runs the sanity pair and 18 confirmatory runs:
+
+```bash
+grafting-b1 --output_dir runs/b1
+```
+
+The B1 runner requires the pinned Super-Tuning commit as an ancestor, rejects changes outside the allowlisted B1 patch, and records hashes for the active source tree and model snapshot. It invokes `ocfda-aligned` and `ocfda-independent` through `supertuning-math`, fixing Llama-3.2-1B, `k=57`, Gate/Up/Down-only FP32 deltas, AdamW with zero weight decay, and the clean held-out suite.

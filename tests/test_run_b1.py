@@ -8,12 +8,27 @@ import pytest
 from fine_tuning.run_b1 import (
     EXPECTED_HELDOUT,
     paired_confirmatory_rows,
+    phase_window,
     prepare_artifacts,
     require_rocm,
     validate_eval_progress,
     validate_input_artifacts,
     validate_sanity_rows,
 )
+
+
+def test_phase_window_selects_inclusive_range() -> None:
+    assert phase_window("smoke_2batch", "confirmatory") == (
+        "smoke_2batch",
+        "sentinel",
+        "pilot",
+        "sanity",
+        "confirmatory",
+    )
+    assert phase_window("pilot", "sanity") == ("pilot", "sanity")
+    assert phase_window("sanity", "sanity") == ("sanity",)
+    with pytest.raises(ValueError):
+        phase_window("sanity", "pilot")
 
 REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -63,6 +78,15 @@ def test_sanity_rows_reject_duplicates() -> None:
     validate_sanity_rows(rows)
     with pytest.raises(RuntimeError, match="Sanity pair"):
         validate_sanity_rows(rows + [rows[0]])
+
+
+def test_allow_cuda_override_permits_nvidia_builds(monkeypatch) -> None:
+    nvidia = SimpleNamespace(
+        cuda=SimpleNamespace(is_available=lambda: True),
+        version=SimpleNamespace(hip=None, cuda="12.4"),
+    )
+    monkeypatch.setitem(sys.modules, "torch", nvidia)
+    require_rocm(allow_cuda=True)
 
 
 def test_b1_requires_rocm_and_accepts_the_torch_cuda_compatibility_api(monkeypatch) -> None:

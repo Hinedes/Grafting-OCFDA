@@ -1,0 +1,89 @@
+{
+  "protocol": "competitive-gate-v1",
+  "status": "FROZEN - edits require a new gate directory; the runner refuses a changed manifest",
+  "notes": [
+    "Frozen input to fine_tuning/competitive_gate.py.",
+    "The runner records a sha256 of this exact file with every result."
+  ],
+  "frozen_model": {
+    "model_id": "meta-llama/Llama-3.2-1B",
+    "model_revision": "5d853ed7d16ac794afa8f5c9c7f59f4e9c950954",
+    "tokenizer_revision": "5d853ed7d16ac794afa8f5c9c7f59f4e9c950954"
+  },
+  "frozen_training": {
+    "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    "lora_r": 8,
+    "batch_size": 16,
+    "micro_batch_size": 16,
+    "num_epochs": 3,
+    "cutoff_len": 256,
+    "warmup_steps": 100,
+    "val_set_size": 120,
+    "val_split_seed": 42
+  },
+  "frozen_eval": {
+    "benchmarks": ["AddSub", "MultiArith", "SingleEq", "gsm8k", "AQuA", "SVAMP"],
+    "generation_max_new_tokens": 256,
+    "generation_num_beams": 4,
+    "generation_batch_size": 1
+  },
+  "baselines": {
+    "lora": {
+      "method": "lora",
+      "lr_grid": [0.0001, 0.0005, 0.001],
+      "selection_train_seed": 9001,
+      "final_train_seeds": [2001, 2002, 2003],
+      "support_seed": null,
+      "optimizer": {"name": "adam", "weight_decay": 0.0},
+      "calibration": {"data": "none", "nsamples": 128, "seed": 228}
+    },
+    "super": {
+      "method": "super-bottom",
+      "lr_grid": [0.0001, 0.0005, 0.001],
+      "selection_train_seed": 9001,
+      "final_train_seeds": [2001, 2002, 2003],
+      "support_seed": null,
+      "optimizer": {"name": "adam", "weight_decay": 0.0},
+      "calibration": {"data": "c4", "nsamples": 128, "seed": 228}
+    }
+  },
+  "provenance_notes": [
+    "Baseline optimizer is Adam/wd=0 (native recipe): the Super-Tuning paper (arXiv:2607.09287) states 'Training uses Adam with weight decay 0', and Adam is this repo's pipeline default. OCFDA keeps B1's AdamW/wd=0.",
+    "Super variant is the Wanda BottomK mask ('super-bottom'): the paper's headline Super rows are BottomK (55.46% vs TopK below it, Llama-3.2-1B 3-epoch).",
+    "Super calibration is 128xC4, seed 228 (paper canonical; allenai/c4 public, pinned shards verified). Deterministic mask; cached in loaders_cache after first build."
+  ],
+  "selection_rule": {
+    "metric": "lr_tuning.nll",
+    "scope": "held-out Math17K validation split only (120 examples, split seed 42)",
+    "aggregation": "mean NLL across runs at (method, lr); selection phase uses one train seed so this is a single value",
+    "tie": "exact B1 rule: 0.5%-within-best-NLL prefers the lower LR (shared implementation with B1)",
+    "forbidden": "benchmark test scores (accuracy/PPL/NLL on the six heldout sets) must not participate in LR selection"
+  },
+  "ocfda_reference": {
+    "source": "confirmatory/results/run_results.jsonl",
+    "method": "ocfda-aligned",
+    "pairs": [[1001, 2001], [1002, 2002], [1003, 2003]],
+    "expected_scores_4dp": [46.3389, 54.4044, 55.5676],
+    "expected_mean_2dp": 52.1,
+    "loader": "read-only; verify ownership triple, trainable == 5603328, and rounded scores before use"
+  },
+  "exploratory": {
+    "source": "pilot/winner_evaluation.json",
+    "label": "exploratory - never a comparator in gate statistics"
+  },
+  "gate_rule": {
+    "primary": "three-seed mean macro accuracy per method",
+    "tolerance_pp": 2.0,
+    "pass": "OCFDA within 2.0pp of the strongest baseline mean or better -> methods-paper route",
+    "rescue_fraction": 0.25,
+    "rescue": "if accuracy fails, OCFDA needs >=25% lower peak training memory or optimizer-state footprint vs every baseline -> tradeoff-paper route",
+    "fail": "neither holds -> stop the competitive-PEFT paper route (geometry/analysis route stays alive)"
+  },
+  "gate_rules": [
+    "Existing aligned OCFDA runs are read-only references; never retrain them.",
+    "Numerically identical seed values across methods do NOT imply equivalent random objects; report independent per-method means, never paired cross-method deltas.",
+    "The existing LoRA sentinel is ambient context only; it must not enter selection or the final comparison.",
+    "Final summary reports three-seed means AND individual scores per method.",
+    "No code may choose hyperparameters from benchmark test scores."
+  ]
+}

@@ -58,6 +58,42 @@ def select_shared_lr(
     }
 
 
+def select_lr_per_method(
+    rows: Sequence[Mapping[str, object]],
+    methods: Sequence[str] = ("ocfda-aligned", "ocfda-independent"),
+) -> dict[str, dict[str, object]]:
+    """Select one validation-NLL learning rate per OCFDA geometry using the frozen 0.5% tie rule."""
+
+    selection: dict[str, dict[str, object]] = {}
+    for method in methods:
+        by_lr: dict[float, list[float]] = defaultdict(list)
+        invalid_candidates = []
+        for row in rows:
+            if str(row.get("method")) != method:
+                continue
+            nll = row.get("lr_tuning", {}).get("nll")
+            if nll is None or not np.isfinite(float(nll)):
+                invalid_candidates.append({"method": method, "lr": float(row["lr"])})
+                continue
+            by_lr[float(row["lr"])].append(float(nll))
+
+        candidates = {lr: float(np.mean(values)) for lr, values in by_lr.items() if values}
+        if not candidates:
+            raise ValueError(f"No learning rate has finite pilot NLLs for {method}")
+        best_lr = min(candidates, key=candidates.get)
+        best_nll = candidates[best_lr]
+        tolerance = max(abs(best_nll) * 0.005, 1e-12)
+        selected_lr = min(lr for lr, nll in candidates.items() if nll <= best_nll + tolerance)
+        selection[method] = {
+            "selected_lr": float(selected_lr),
+            "selected_nll": float(candidates[selected_lr]),
+            "candidates": {str(lr): nll for lr, nll in sorted(candidates.items())},
+            "invalid_candidates": invalid_candidates,
+            "tie_rule_relative": 0.005,
+        }
+    return selection
+
+
 def _pair_delta(row: Mapping[str, object]) -> float:
     if row.get("delta") is not None:
         return float(row["delta"])
