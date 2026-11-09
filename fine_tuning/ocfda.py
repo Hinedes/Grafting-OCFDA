@@ -291,7 +291,8 @@ def verify_host_tensor_hashes(
     missing = sorted(set(expected) - set(actual))
     changed = sorted(name for name in expected if name in actual and expected[name] != actual[name])
     if missing or changed:
-        details = []
+        first = (changed or missing)[0]
+        details = [f"first={first}"]
         if missing:
             details.append(f"missing={missing[:3]}")
         if changed:
@@ -305,12 +306,22 @@ def verify_host_tensor_hashes(
     }
 
 
+def set_graft_enabled(model: nn.Module, enabled: bool) -> None:
+    """Switch every OCFDA wrapper's Graft on or off in place."""
+
+    wrappers = tuple(getattr(model, "ocfda_wrappers", ()))
+    if not wrappers:
+        raise RuntimeError("No OCFDA wrappers found")
+    for wrapper in wrappers:
+        wrapper.graft_enabled = bool(enabled)
+
+
 @contextmanager
 def graft_detached(model: nn.Module) -> Iterator[nn.Module]:
     wrappers = tuple(getattr(model, "ocfda_wrappers", ()))
     previous = [wrapper.graft_enabled for wrapper in wrappers]
-    for wrapper in wrappers:
-        wrapper.graft_enabled = False
+    if wrappers:
+        set_graft_enabled(model, False)
     try:
         yield model
     finally:

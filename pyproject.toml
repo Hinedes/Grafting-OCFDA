@@ -47,6 +47,7 @@ supertuning-profile = "fine_tuning.profile_efficiency:main"
 supertuning-eval = "fine_tuning.evaluate_checkpoint:main"
 supertuning-data-audit = "fine_tuning.data_integrity:main"
 grafting-b1 = "fine_tuning.run_b1:main"
+grafting = "fine_tuning.graft_cli:main"
 
 [tool.setuptools]
 py-modules = ["dense_plus_sparse_linear", "dense_plus_sparse_linear_plus_lora"]

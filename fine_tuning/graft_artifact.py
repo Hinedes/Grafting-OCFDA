@@ -134,7 +134,9 @@ def _load_legacy_state(path: str) -> dict[str, torch.Tensor]:
     }
 
 
-def _read_graft(path: str) -> tuple[dict[str, Any], dict[str, torch.Tensor], int]:
+def read_graft_manifest(path: str) -> dict[str, Any]:
+    """Read and normalize a v1 or v2 Graft manifest without loading tensors."""
+
     if not os.path.isdir(path):
         raise FileNotFoundError(f"Graft path is not a directory: {path}")
 
@@ -147,10 +149,9 @@ def _read_graft(path: str) -> tuple[dict[str, Any], dict[str, torch.Tensor], int
                 f"Unsupported Graft format version: {manifest.get('format_version')!r}; "
                 f"expected {GRAFT_FORMAT_VERSION}"
             )
-        tensors_path = os.path.join(path, GRAFT_TENSORS_NAME)
-        if not os.path.isfile(tensors_path):
+        if not os.path.isfile(os.path.join(path, GRAFT_TENSORS_NAME)):
             raise FileNotFoundError(f"Missing {GRAFT_TENSORS_NAME} in {path}")
-        return manifest, load_file(tensors_path), GRAFT_FORMAT_VERSION
+        return manifest
 
     legacy_path = os.path.join(path, LEGACY_MANIFEST_NAME)
     if not os.path.isfile(legacy_path):
@@ -163,11 +164,16 @@ def _read_graft(path: str) -> tuple[dict[str, Any], dict[str, torch.Tensor], int
         raise ValueError(f"Unsupported checkpoint format version: {metadata.get('format_version')!r}")
     if metadata.get("adapter_name") != "ocfda":
         raise ValueError("Only OCFDA checkpoints can be loaded as a Graft artifact")
+    if not any(
+        os.path.isfile(os.path.join(path, name))
+        for name in ("model.safetensors", "pytorch_model.bin")
+    ):
+        raise FileNotFoundError(f"No model.safetensors or pytorch_model.bin found in {path}")
     ownership = metadata.get("ocfda_ownership", {})
     host_hashes = ownership.get("host", {}).get("hashes")
     if not isinstance(host_hashes, dict) or not host_hashes:
         raise RuntimeError("Format-version-1 checkpoint is missing pretrained host tensor hashes")
-    manifest = {
+    return {
         "format_version": 1,
         "base_model": metadata.get("base_model"),
         "base_model_revision": metadata.get("model_revision"),
@@ -180,7 +186,44 @@ def _read_graft(path: str) -> tuple[dict[str, Any], dict[str, torch.Tensor], int
         "provenance": {"protocol": metadata["protocol"]} if metadata.get("protocol") else {},
         "extra_metadata": metadata,
     }
-    return manifest, _load_legacy_state(path), 1
+
+
+def _load_graft_state(path: str, manifest: Mapping[str, Any]) -> dict[str, torch.Tensor]:
+    if manifest.get("format_version") == 1:
+        return _load_legacy_state(path)
+    tensors_path = os.path.join(path, GRAFT_TENSORS_NAME)
+    if not os.path.isfile(tensors_path):
+        raise FileNotFoundError(f"Missing {GRAFT_TENSORS_NAME} in {path}")
+    return load_file(tensors_path)
+
+
+def _read_graft(path: str) -> tuple[dict[str, Any], dict[str, torch.Tensor], int]:
+    manifest = read_graft_manifest(path)
+    return manifest, _load_graft_state(path, manifest), int(manifest["format_version"])
+
+
+def verify_host(
+    host_model: torch.nn.Module,
+    manifest: Mapping[str, Any],
+    path: Optional[str] = None,
+) -> None:
+    """Verify that the host tensors match the manifest without changing the model."""
+
+    expected_hashes = manifest.get("host_tensor_hashes")
+    if not isinstance(expected_hashes, dict) or not expected_hashes:
+        raise RuntimeError("Graft manifest is missing pretrained host tensor hashes")
+    host_state_names = {
+        name
+        for name, _ in list(host_model.named_parameters()) + list(host_model.named_buffers())
+        if not any(marker in name for marker in GRAFT_MARKERS)
+    }
+    if set(expected_hashes) != host_state_names:
+        raise RuntimeError("Graft manifest does not contain a complete pretrained host hash set")
+    try:
+        verify_host_tensor_hashes(host_model, expected_hashes, exclude=GRAFT_MARKERS)
+    except RuntimeError as exc:
+        prefix = f"Graft host mismatch for {path}: " if path else "Graft host mismatch: "
+        raise RuntimeError(f"{prefix}{exc}") from exc
 
 
 def save_graft(
@@ -282,37 +325,20 @@ def save_graft(
     return manifest
 
 
-def load_graft(
+def verify_graft(
     host_model: torch.nn.Module,
     path: str,
     strict_b1: bool = False,
-) -> dict[str, Any]:
-    """Load a Graft artifact onto an already OCFDA-wrapped host model.
+) -> tuple[dict[str, Any], dict[str, torch.Tensor]]:
+    """Verify a Graft artifact against a wrapped host without changing the model.
 
-    The host tensor hashes are verified before any tensor is loaded, so a Graft
-    produced for a different base model is refused.  ``strict_b1=True`` also
-    applies the frozen B1 model/revision/k/seed checks.
+    Returns the normalized manifest and the validated Graft state dictionary.
     """
 
     manifest, state, _version = _read_graft(path)
     if strict_b1:
         _check_strict_b1(manifest)
-
-    expected_hashes = manifest.get("host_tensor_hashes")
-    if not isinstance(expected_hashes, dict) or not expected_hashes:
-        raise RuntimeError("Graft manifest is missing pretrained host tensor hashes")
-    host_state = host_model.state_dict()
-    host_state_names = {
-        name
-        for name in host_state
-        if not any(marker in name for marker in GRAFT_MARKERS)
-    }
-    if set(expected_hashes) != host_state_names:
-        raise RuntimeError("Graft manifest does not contain a complete pretrained host hash set")
-    try:
-        verify_host_tensor_hashes(host_model, expected_hashes, exclude=GRAFT_MARKERS)
-    except RuntimeError as exc:
-        raise RuntimeError(f"Graft host mismatch for {path}: {exc}") from exc
+    verify_host(host_model, manifest, path)
 
     host_supports = getattr(host_model, "ocfda_supports", None)
     if host_supports is None:
@@ -350,5 +376,21 @@ def load_graft(
             )
         if OCFDA_SUPPORT_MARKER in name and not torch.equal(state[name].cpu(), host_state[name].cpu()):
             raise RuntimeError(f"Graft support tensor mismatch for {name}")
+    return manifest, state
+
+
+def load_graft(
+    host_model: torch.nn.Module,
+    path: str,
+    strict_b1: bool = False,
+) -> dict[str, Any]:
+    """Load a Graft artifact onto an already OCFDA-wrapped host model.
+
+    The host tensor hashes are verified before any tensor is loaded, so a Graft
+    produced for a different base model is refused.  ``strict_b1=True`` also
+    applies the frozen B1 model/revision/k/seed checks.
+    """
+
+    manifest, state = verify_graft(host_model, path, strict_b1=strict_b1)
     host_model.load_state_dict(state, strict=False)
     return manifest
