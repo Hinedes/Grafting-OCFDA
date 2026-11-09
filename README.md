@@ -14,10 +14,11 @@ chat but unreliable on "what is 47 + 38?". Fine-tuning the whole model would
 change the weights they already validated and make every experiment a new
 model.
 
-They train a Graft on a small set of arithmetic prompts. The host stays
-Qwen2.5-0.5B. When a request needs arithmetic, `attach_graft` turns the Graft
-on. When it doesn't, `detach_graft` turns it off and the model answers from the
-host alone.
+They train a Graft on a small set of arithmetic prompts and attach it once
+with `attach_graft`. The host stays Qwen2.5-0.5B. For a request that doesn't
+need arithmetic, `detach_graft` turns the Graft off and the model answers from
+the host alone. `enable_graft` turns it back on for the next request. Neither
+call reloads anything.
 
 The Grafts live in `~/grafts`. `grafting list` shows them, and `swap_graft`
 moves between two Grafts trained with the same support layout without
@@ -97,8 +98,9 @@ already wrapped, it keeps its current Graft.
 
 ## Guarantees
 
-Detached output is bitwise equal to the plain host. `detach_graft` only flips
-the wrapper gates; it does not copy or restore weights.
+Detached output is bitwise equal to the plain host. `detach_graft` calls
+`set_graft_enabled(model, False)`, which sets `graft_enabled` to `False` on
+every OCFDA wrapper; it does not copy or restore weights.
 
 Training and attach leave every host weight unchanged. The optimizer only sees
 `graft_delta` parameters.
@@ -127,9 +129,11 @@ These are checked in `tests/test_graft_manage.py`
 
 ## Run it
 
-Python 3.10 or newer and the dependencies in `pyproject.toml`. The commands
-below ran on CPU with a pre-populated `HF_HOME`; `--local-files-only` and
-`grafting verify` use that cache.
+Python 3.10 or newer and the dependencies in `pyproject.toml`. The train
+commands and Python loads below run on CPU and download Qwen2.5-0.5B into
+`HF_HOME` on first use. For an existing cache, add `--local-files-only` to
+`grafting train` and `local_files_only=True` to the Python loads to run
+offline. `grafting verify` always reads the cache.
 
 ```sh
 git clone https://github.com/Hinedes/Grafting-OCFDA.git
@@ -161,7 +165,7 @@ Train two Grafts with the same support and `k`, so one can replace the other.
 Ten steps is a smoke run, not a useful arithmetic model.
 
 ```sh
-COMMON="--model Qwen/Qwen2.5-0.5B --revision 060db6499f32faf8b98477b0a26969ef7d8b9987 --train-data $HOME/grafts/arithmetic.json --k 8 --geometry aligned --support-seed 1001 --steps 10 --batch-size 2 --max-examples 64 --max-length 64 --loss-on response --dtype fp32 --device cpu --local-files-only"
+COMMON="--model Qwen/Qwen2.5-0.5B --revision 060db6499f32faf8b98477b0a26969ef7d8b9987 --train-data $HOME/grafts/arithmetic.json --k 8 --geometry aligned --support-seed 1001 --steps 10 --batch-size 2 --max-examples 64 --max-length 64 --loss-on response --dtype fp32 --device cpu"
 grafting train $COMMON --output-dir ~/grafts/arithmetic-a --seed 2001
 grafting train $COMMON --output-dir ~/grafts/arithmetic-b --seed 2002
 ```
@@ -185,11 +189,9 @@ model_id = "Qwen/Qwen2.5-0.5B"
 revision = "060db6499f32faf8b98477b0a26969ef7d8b9987"
 grafts = Path.home() / "grafts"
 
-tokenizer = AutoTokenizer.from_pretrained(
-    model_id, revision=revision, local_files_only=True
-)
+tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision)
 model = AutoModelForCausalLM.from_pretrained(
-    model_id, revision=revision, torch_dtype=torch.float32, local_files_only=True
+    model_id, revision=revision, torch_dtype=torch.float32
 )
 model.eval()
 
