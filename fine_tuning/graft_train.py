@@ -25,17 +25,20 @@ except ImportError:
     from ocfda import get_ocfda_model
 
 
-def format_prompt(example: Mapping[str, Any]) -> str:
+def format_prompt_prefix(example: Mapping[str, Any]) -> str:
     instruction = str(example.get("instruction", "")).strip()
     input_text = str(example.get("input", "") or "").strip()
-    output = str(example.get("output", "")).strip()
     parts = []
     if instruction:
         parts.append(f"### Instruction:\n{instruction}")
     if input_text:
         parts.append(f"### Input:\n{input_text}")
-    parts.append(f"### Response:\n{output}")
+    parts.append("### Response:\n")
     return "\n\n".join(parts)
+
+
+def format_prompt(example: Mapping[str, Any]) -> str:
+    return format_prompt_prefix(example) + str(example.get("output", "")).strip()
 
 
 def _resolve_device(device: Optional[str]) -> torch.device:
@@ -69,6 +72,72 @@ def _load_examples(path: str, max_examples: Optional[int]) -> list[dict[str, Any
     return examples
 
 
+def _token_ids(encoded: Mapping[str, Any], index: int) -> list[int]:
+    ids = encoded["input_ids"]
+    if isinstance(ids, torch.Tensor):
+        ids = ids.tolist()
+    if ids and isinstance(ids[0], list):
+        ids = ids[index]
+    return [int(value) for value in ids]
+
+
+def _common_prefix_length(left: list[int], right: list[int]) -> int:
+    for index, (left_value, right_value) in enumerate(zip(left, right)):
+        if left_value != right_value:
+            return index
+    return min(len(left), len(right))
+
+
+def encode_examples(
+    tokenizer: Any,
+    examples: list[dict[str, Any]],
+    max_length: int = 128,
+    loss_on: str = "response",
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Encode a batch and mask labels according to ``loss_on``.
+
+    ``response`` uses the literal boundary ``### Response:\\n`` from
+    ``format_prompt_prefix``: the prefix is instruction/input plus that
+    delimiter, and the response is the ``output`` field.  Token-level masking
+    starts at the end of the common token prefix between the prefix text and
+    the full prompt+response text.
+    """
+
+    if loss_on not in {"response", "all"}:
+        raise ValueError("loss_on must be 'response' or 'all'")
+    full_texts = [format_prompt(example) for example in examples]
+    full = tokenizer(
+        full_texts,
+        return_tensors="pt",
+        padding=True,
+        truncation=True,
+        max_length=max_length,
+        add_special_tokens=False,
+    )
+    input_ids = full["input_ids"]
+    attention_mask = full["attention_mask"]
+    labels = input_ids.clone()
+    labels[attention_mask == 0] = -100
+    if loss_on == "response":
+        prefix_texts = [format_prompt_prefix(example) for example in examples]
+        prefix = tokenizer(
+            prefix_texts,
+            return_tensors=None,
+            padding=False,
+            truncation=True,
+            max_length=max_length,
+            add_special_tokens=False,
+        )
+        for index in range(len(examples)):
+            prefix_ids = _token_ids(prefix, index)
+            full_ids = [int(value) for value in input_ids[index].tolist()]
+            start = _common_prefix_length(prefix_ids, full_ids)
+            labels[index, :start] = -100
+        if not labels.ne(-100).any():
+            raise ValueError("loss_on='response' batch has no response tokens")
+    return input_ids, attention_mask, labels
+
+
 def train_graft(
     model_id: str,
     train_data: str,
@@ -84,6 +153,7 @@ def train_graft(
     seed: int = 0,
     max_examples: Optional[int] = 256,
     max_length: int = 128,
+    loss_on: str = "response",
     dtype: str = "auto",
     device: Optional[str] = None,
     local_files_only: bool = False,
@@ -104,6 +174,8 @@ def train_graft(
         raise ValueError("batch_size must be positive")
     if supports is None and support_seed is None:
         raise ValueError("provide support_seed or explicit supports")
+    if loss_on not in {"response", "all"}:
+        raise ValueError("loss_on must be 'response' or 'all'")
 
     resolved_device = _resolve_device(device)
     resolved_dtype = _resolve_dtype(dtype, resolved_device)
@@ -155,22 +227,13 @@ def train_graft(
     started = time.time()
     for _step in range(steps):
         batch = [examples[rng.randrange(len(examples))] for _ in range(batch_size)]
-        texts = [format_prompt(example) for example in batch]
-        encoded = tokenizer(
-            texts,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-            max_length=max_length,
-        )
-        encoded.pop("token_type_ids", None)
-        labels = encoded["input_ids"].clone()
-        labels[encoded["attention_mask"] == 0] = -100
-        encoded = {name: tensor.to(resolved_device) for name, tensor in encoded.items()}
+        input_ids, attention_mask, labels = encode_examples(tokenizer, batch, max_length, loss_on)
+        input_ids = input_ids.to(resolved_device)
+        attention_mask = attention_mask.to(resolved_device)
         labels = labels.to(resolved_device)
 
         optimizer.zero_grad(set_to_none=True)
-        output = model(**encoded, labels=labels)
+        output = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
         loss = output.loss
         if not torch.isfinite(loss):
             raise RuntimeError(f"Non-finite training loss at step {_step + 1}: {loss.item()}")
@@ -191,6 +254,7 @@ def train_graft(
             "learning_rate": float(learning_rate),
             "max_examples": max_examples,
             "max_length": int(max_length),
+            "loss_on": loss_on,
             "loss_start": losses[0],
             "loss_end": losses[-1],
             "duration_seconds": duration,
@@ -207,6 +271,7 @@ def train_graft(
         "steps": steps,
         "batch_size": batch_size,
         "learning_rate": learning_rate,
+        "loss_on": loss_on,
         "device": str(resolved_device),
         "dtype": str(host_dtype).replace("torch.", ""),
         "trainable_parameters": sum(parameter.numel() for parameter in trainable),

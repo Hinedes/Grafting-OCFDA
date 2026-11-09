@@ -219,12 +219,22 @@ def _read_graft(path: str) -> tuple[dict[str, Any], dict[str, torch.Tensor], int
     return manifest, _load_graft_state(path, manifest), int(manifest["format_version"])
 
 
-def verify_host(
+def _host_model_id(host_model: torch.nn.Module) -> Optional[str]:
+    config = getattr(host_model, "config", None)
+    value = getattr(config, "_name_or_path", None) or getattr(config, "name_or_path", None)
+    if not value:
+        return None
+    value = str(value)
+    if os.path.isabs(value) or value.startswith((".", "/", "\\")) or "\\" in value:
+        return None
+    return value
+
+
+def verify_host_identity(
     host_model: torch.nn.Module,
     manifest: Mapping[str, Any],
-    path: Optional[str] = None,
 ) -> None:
-    """Verify that the host tensors match the manifest without changing the model."""
+    """Refuse a Graft whose base model or host tensor-name set differs."""
 
     expected_hashes = manifest.get("host_tensor_hashes")
     if not isinstance(expected_hashes, dict) or not expected_hashes:
@@ -234,8 +244,34 @@ def verify_host(
         for name, _ in list(host_model.named_parameters()) + list(host_model.named_buffers())
         if not any(marker in name for marker in GRAFT_MARKERS)
     }
-    if set(expected_hashes) != host_state_names:
-        raise RuntimeError("Graft manifest does not contain a complete pretrained host hash set")
+    expected_names = set(expected_hashes)
+    manifest_base = manifest.get("base_model")
+    host_base = _host_model_id(host_model)
+    if manifest_base and host_base and manifest_base != host_base:
+        raise RuntimeError(
+            f"Graft is for {manifest_base} ({len(expected_names)} host tensors); "
+            f"this host is {host_base} ({len(host_state_names)} host tensors) / different base model"
+        )
+    if expected_names != host_state_names:
+        if host_base:
+            host_description = f"this host is {host_base} ({len(host_state_names)} host tensors)"
+        else:
+            host_description = f"this host has {len(host_state_names)} tensors"
+        raise RuntimeError(
+            f"Graft is for {manifest_base or 'unknown host'} ({len(expected_names)} host tensors); "
+            f"{host_description} / different tensor names"
+        )
+
+
+def verify_host(
+    host_model: torch.nn.Module,
+    manifest: Mapping[str, Any],
+    path: Optional[str] = None,
+) -> None:
+    """Verify that the host tensors match the manifest without changing the model."""
+
+    verify_host_identity(host_model, manifest)
+    expected_hashes = manifest["host_tensor_hashes"]
     try:
         verify_host_tensor_hashes(host_model, expected_hashes, exclude=GRAFT_MARKERS)
     except RuntimeError as exc:

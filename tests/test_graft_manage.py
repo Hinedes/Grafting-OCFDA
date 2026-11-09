@@ -19,7 +19,7 @@ from fine_tuning.graft_manage import (
     list_grafts,
     swap_graft,
 )
-from fine_tuning.graft_train import train_graft
+from fine_tuning.graft_train import encode_examples, format_prompt_prefix, train_graft
 from fine_tuning.ocfda import get_ocfda_model, get_ocfda_model_state_dict
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -391,6 +391,7 @@ def test_train_graft_tiny_model_round_trip(tmp_path) -> None:
         seed=11,
         max_examples=4,
         max_length=16,
+        loss_on="all",
         device="cpu",
         dtype="fp32",
         model=model,
@@ -413,3 +414,124 @@ def test_train_graft_tiny_model_round_trip(tmp_path) -> None:
         actual = attached(input_ids).logits
 
     assert torch.equal(actual, expected)
+
+
+def test_grafting_facade_exports_api() -> None:
+    import grafting
+
+    for name in (
+        "save_graft",
+        "load_graft",
+        "verify_graft",
+        "read_graft_manifest",
+        "attach_graft",
+        "detach_graft",
+        "enable_graft",
+        "swap_graft",
+        "list_grafts",
+        "train_graft",
+    ):
+        assert callable(getattr(grafting, name))
+
+
+def test_cross_host_refusal_names_models_and_counts(tmp_path) -> None:
+    model = trained(delta_seed=11)
+    save_graft(model, str(tmp_path / "graft"), extra_metadata=meta({"base_model": "test/artifact"}))
+
+    host = base_model()
+    host.config._name_or_path = "test/host"
+    host.model.layers.append(TinyLayer())
+
+    with pytest.raises(RuntimeError) as exc:
+        attach_graft(host, str(tmp_path / "graft"))
+
+    message = str(exc.value)
+    assert "test/artifact" in message
+    assert "test/host" in message
+    assert "6 host tensors" in message
+    assert "9 host tensors" in message
+    assert "different base model" in message
+    assert not hasattr(host, "ocfda_wrappers")
+
+
+class CharacterTokenizer:
+    pad_token_id = 0
+    eos_token_id = 1
+    pad_token = "<pad>"
+    padding_side = "right"
+
+    def __call__(
+        self,
+        texts,
+        return_tensors=None,
+        padding=False,
+        truncation=False,
+        max_length=None,
+        add_special_tokens=False,
+        **kwargs,
+    ):
+        single = isinstance(texts, str)
+        if single:
+            texts = [texts]
+        sequences = []
+        for text in texts:
+            ids = [ord(character) % 30 + 2 for character in text]
+            if truncation and max_length:
+                ids = ids[:max_length]
+            sequences.append(ids)
+        if return_tensors == "pt" or padding:
+            width = max((len(sequence) for sequence in sequences), default=1)
+            input_ids = torch.zeros((len(sequences), width), dtype=torch.long)
+            attention_mask = torch.zeros_like(input_ids)
+            for index, sequence in enumerate(sequences):
+                input_ids[index, : len(sequence)] = torch.tensor(sequence, dtype=torch.long)
+                attention_mask[index, : len(sequence)] = 1
+            return {"input_ids": input_ids, "attention_mask": attention_mask}
+        return {"input_ids": sequences[0] if single else sequences}
+
+
+def test_train_graft_response_loss_masks_prompt(tmp_path) -> None:
+    tokenizer = CharacterTokenizer()
+    example = {"instruction": "Q?", "input": "", "output": "ABC"}
+    prefix = format_prompt_prefix(example)
+    input_ids, attention_mask, labels = encode_examples(
+        tokenizer,
+        [example],
+        max_length=128,
+        loss_on="response",
+    )
+    boundary = len(prefix)
+    assert attention_mask.all()
+    assert (labels[0, :boundary] == -100).all()
+    assert (labels[0, boundary:] != -100).all()
+    assert labels[0, boundary:].tolist() == input_ids[0, boundary:].tolist()
+
+    data = [
+        {"instruction": f"What is {index}+{index}?", "input": "", "output": str(index + index)}
+        for index in range(4)
+    ]
+    train_data = tmp_path / "train.json"
+    train_data.write_text(json.dumps(data), encoding="utf-8")
+    torch.manual_seed(42)
+    model = LlamaForCausalLM(llama_config())
+    result = train_graft(
+        model_id="test/tiny",
+        train_data=str(train_data),
+        output_dir=str(tmp_path / "graft"),
+        k=2,
+        geometry="aligned",
+        support_seed=7,
+        learning_rate=1e-2,
+        steps=2,
+        batch_size=2,
+        seed=11,
+        max_examples=4,
+        max_length=64,
+        loss_on="response",
+        device="cpu",
+        dtype="fp32",
+        model=model,
+        tokenizer=CharacterTokenizer(),
+    )
+    assert result["manifest"]["format_version"] == 2
+    assert result["loss_on"] == "response"

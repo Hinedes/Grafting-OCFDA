@@ -20,6 +20,7 @@ try:
         read_graft_manifest,
         verify_graft,
         verify_host,
+        verify_host_identity,
     )
     from .ocfda import get_ocfda_model, get_ocfda_model_state_dict, set_graft_enabled
 except ImportError:
@@ -29,6 +30,7 @@ except ImportError:
         read_graft_manifest,
         verify_graft,
         verify_host,
+        verify_host_identity,
     )
     from ocfda import get_ocfda_model, get_ocfda_model_state_dict, set_graft_enabled
 
@@ -67,6 +69,7 @@ def attach_graft(host_model: torch.nn.Module, artifact_path: str) -> torch.nn.Mo
     if not supports or k is None or geometry is None:
         raise RuntimeError(f"Graft artifact {artifact_path} is missing supports/k/geometry")
 
+    verify_host_identity(host_model, manifest)
     target_dtype = manifest_torch_dtype(manifest)
     if not _is_wrapped(host_model) and target_dtype is not None:
         current_dtype = next(host_model.parameters()).dtype

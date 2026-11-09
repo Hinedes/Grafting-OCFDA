@@ -51,14 +51,26 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_host_source(model: str, revision: str | None) -> str:
+    if os.path.isdir(model):
+        return model
+    if revision:
+        from huggingface_hub import snapshot_download
+
+        return snapshot_download(model, revision=revision, local_files_only=True)
+    return model
+
+
 def _cmd_verify(args: argparse.Namespace) -> int:
     manifest = read_graft_manifest(args.artifact)
     dtype = manifest_torch_dtype(manifest) or torch.float32
-    kwargs = {"torch_dtype": dtype, "local_files_only": True}
-    revision = manifest.get("base_model_revision")
-    if revision and not os.path.isdir(args.model) and args.model == manifest.get("base_model"):
-        kwargs["revision"] = revision
-    model = AutoModelForCausalLM.from_pretrained(args.model, **kwargs)
+    revision = manifest.get("base_model_revision") if args.model == manifest.get("base_model") else None
+    source = _resolve_host_source(args.model, revision)
+    model = AutoModelForCausalLM.from_pretrained(
+        source,
+        torch_dtype=dtype,
+        local_files_only=True,
+    )
     model.eval()
     try:
         attach_graft(model, args.artifact)
@@ -89,6 +101,7 @@ def _cmd_train(args: argparse.Namespace) -> int:
         seed=args.seed,
         max_examples=args.max_examples,
         max_length=args.max_length,
+        loss_on=args.loss_on,
         dtype=args.dtype,
         device=args.device,
         local_files_only=args.local_files_only,
@@ -129,6 +142,7 @@ def main(argv: list[str] | None = None) -> int:
     train_parser.add_argument("--seed", type=int, default=0)
     train_parser.add_argument("--max-examples", type=int, default=256)
     train_parser.add_argument("--max-length", type=int, default=128)
+    train_parser.add_argument("--loss-on", choices=["response", "all"], default="response")
     train_parser.add_argument("--dtype", choices=["auto", "bf16", "fp16", "fp32"], default="auto")
     train_parser.add_argument("--device", default=None)
     train_parser.add_argument("--local-files-only", action="store_true")
