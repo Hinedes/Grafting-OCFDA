@@ -50,6 +50,11 @@ except ImportError:
     )
 
 try:
+    from .graft_artifact import save_graft
+except ImportError:
+    from graft_artifact import save_graft
+
+try:
     from .baselines import SIFT
     from .training_curve_utils import TrainingCurveCallback
 except ImportError:
@@ -605,7 +610,7 @@ def train(
                 if not key.startswith("_sift_")
             }
             model.save_pretrained(output_dir, state_dict=dense_state)
-        else:
+        elif adapter_name != "ocfda":
             model.save_pretrained(output_dir)
         tokenizer_files = tokenizer.save_pretrained(output_dir) or ()
         tokenizer_artifacts = {}
@@ -660,8 +665,11 @@ def train(
                     },
                 }
             )
-        with open(os.path.join(output_dir, "supertuning_config.json"), "w", encoding="utf-8") as metadata_file:
-            json.dump(metadata, metadata_file, indent=2, sort_keys=True)
+        if adapter_name == "ocfda":
+            save_graft(model, output_dir, extra_metadata=metadata, legacy_checkpoint=True)
+        else:
+            with open(os.path.join(output_dir, "supertuning_config.json"), "w", encoding="utf-8") as metadata_file:
+                json.dump(metadata, metadata_file, indent=2, sort_keys=True)
 
     if adapter_name == "ocfda" and not int(os.environ.get("LOCAL_RANK", 0)):
         os.makedirs(output_dir, exist_ok=True)

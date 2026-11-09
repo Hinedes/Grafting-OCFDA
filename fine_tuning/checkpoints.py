@@ -17,10 +17,12 @@ from dense_plus_sparse_linear_plus_lora import get_dense_plus_sparse_plus_lora_m
 
 try:
     from .artifacts import sha256_file, sha256_tree
-    from .ocfda import get_ocfda_model, verify_host_tensor_hashes
+    from .graft_artifact import load_graft
+    from .ocfda import get_ocfda_model
 except ImportError:
     from artifacts import sha256_file, sha256_tree
-    from ocfda import get_ocfda_model, verify_host_tensor_hashes
+    from graft_artifact import load_graft
+    from ocfda import get_ocfda_model
 
 METADATA_NAME = "supertuning_config.json"
 B1_PROTOCOL = "B1-OCFDA"
@@ -276,33 +278,9 @@ def load_checkpoint(
             )
             if metadata.get("ocfda_trainable_scalars") != model.optimizer_trainable_params:
                 raise RuntimeError("Checkpoint OCFDA budget does not match the reconstructed adapter")
-            state = _load_adapter_state(checkpoint_dir)
-            ownership = metadata.get("ocfda_ownership", {})
-            expected_host_hashes = (
+            if metadata.get("protocol") == B1_PROTOCOL:
                 _validate_b1_host_metadata(metadata)
-                if metadata.get("protocol") == B1_PROTOCOL
-                else ownership.get("host", {}).get("hashes")
-            )
-            if not isinstance(expected_host_hashes, dict) or not expected_host_hashes:
-                raise RuntimeError("OCFDA checkpoint is missing pretrained host tensor hashes")
-            host_state_names = {
-                name
-                for name, _ in list(model.named_parameters()) + list(model.named_buffers())
-                if "graft_delta" not in name and "graft_support" not in name
-            }
-            if set(expected_host_hashes) != host_state_names:
-                raise RuntimeError("OCFDA checkpoint does not contain a complete pretrained host hash set")
-            if expected_host_hashes:
-                verify_host_tensor_hashes(model, expected_host_hashes)
-            expected_supports = {
-                name: tensor
-                for name, tensor in model.state_dict().items()
-                if "graft_support" in name
-            }
-            for name, tensor in expected_supports.items():
-                if name not in state or not torch.equal(tensor.cpu(), state[name].cpu()):
-                    raise RuntimeError(f"Checkpoint support does not match metadata for {name}")
-            _validate_loaded_adapter(model, state, ("graft_delta", "graft_support"))
+            load_graft(model, checkpoint_dir, strict_b1=metadata.get("protocol") == B1_PROTOCOL)
         elif adapter_name == "rosa":
             from .rosa.rosa.scheduler import RosaScheduler  # noqa: F401
             from .rosa.rosa_adapter import get_rosa_model

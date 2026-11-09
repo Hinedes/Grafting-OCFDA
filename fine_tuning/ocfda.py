@@ -264,12 +264,14 @@ def is_ocfda_parameter(name: str, parameter: Optional[torch.Tensor] = None) -> b
     return OCFDA_PARAMETER_MARKER in name or bool(getattr(parameter, "_ocfda_owned", False))
 
 
-def host_tensor_hashes(model: nn.Module) -> dict[str, str]:
+def host_tensor_hashes(model: nn.Module, exclude: Iterable[str] = ()) -> dict[str, str]:
     """Hash parameters and buffers, including names and tensor metadata."""
 
     hashes: dict[str, str] = {}
     tensors = list(model.named_parameters()) + list(model.named_buffers())
     for name, tensor in tensors:
+        if any(marker in name for marker in exclude):
+            continue
         value = tensor.detach().to(device="cpu").contiguous()
         digest = hashlib.sha256()
         digest.update(name.encode("utf-8"))
@@ -280,8 +282,12 @@ def host_tensor_hashes(model: nn.Module) -> dict[str, str]:
     return hashes
 
 
-def verify_host_tensor_hashes(model: nn.Module, expected: Mapping[str, str]) -> dict[str, object]:
-    actual = host_tensor_hashes(model)
+def verify_host_tensor_hashes(
+    model: nn.Module,
+    expected: Mapping[str, str],
+    exclude: Iterable[str] = (),
+) -> dict[str, object]:
+    actual = host_tensor_hashes(model, exclude=exclude)
     missing = sorted(set(expected) - set(actual))
     changed = sorted(name for name in expected if name in actual and expected[name] != actual[name])
     if missing or changed:
