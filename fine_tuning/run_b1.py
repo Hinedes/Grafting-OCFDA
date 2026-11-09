@@ -87,6 +87,7 @@ B1_ALLOWED_TREE_CHANGES = {
     "fine_tuning/graft_artifact.py",
     "fine_tuning/graft_cli.py",
     "fine_tuning/graft_manage.py",
+    "fine_tuning/graft_train.py",
     "fine_tuning/launch_math_methods.py",
     "fine_tuning/math_experiment_tables.py",
     "fine_tuning/competitive_gate.py",

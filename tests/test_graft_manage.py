@@ -19,6 +19,7 @@ from fine_tuning.graft_manage import (
     list_grafts,
     swap_graft,
 )
+from fine_tuning.graft_train import train_graft
 from fine_tuning.ocfda import get_ocfda_model, get_ocfda_model_state_dict
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -342,3 +343,73 @@ def test_cli_list_inspect_and_verify(tmp_path) -> None:
     assert result.returncode == 1
     assert "MISMATCH" in result.stdout
     assert "first=" in result.stdout
+
+
+class FixedBatchTokenizer:
+    pad_token_id = 0
+    eos_token_id = 1
+    pad_token = "<pad>"
+    padding_side = "right"
+
+    def __call__(
+        self,
+        texts,
+        return_tensors=None,
+        padding=None,
+        truncation=None,
+        max_length=None,
+        **kwargs,
+    ):
+        count = len(texts)
+        input_ids = torch.tensor(
+            [[1, 2, 3, 4, 5, 6, 7, 8] for _ in range(count)],
+            dtype=torch.long,
+        )
+        return {"input_ids": input_ids, "attention_mask": torch.ones_like(input_ids)}
+
+
+def test_train_graft_tiny_model_round_trip(tmp_path) -> None:
+    data = [
+        {"instruction": f"What is {index}+{index}?", "input": "", "output": str(index + index)}
+        for index in range(4)
+    ]
+    train_data = tmp_path / "train.json"
+    train_data.write_text(json.dumps(data), encoding="utf-8")
+
+    torch.manual_seed(42)
+    model = LlamaForCausalLM(llama_config())
+    result = train_graft(
+        model_id="test/tiny",
+        train_data=str(train_data),
+        output_dir=str(tmp_path / "graft"),
+        k=2,
+        geometry="aligned",
+        support_seed=7,
+        learning_rate=1e-2,
+        steps=2,
+        batch_size=2,
+        seed=11,
+        max_examples=4,
+        max_length=16,
+        device="cpu",
+        dtype="fp32",
+        model=model,
+        tokenizer=FixedBatchTokenizer(),
+    )
+
+    assert result["manifest"]["format_version"] == 2
+    assert result["dtype"] == "float32"
+    trained = result["model"]
+    trained.eval()
+    input_ids = torch.tensor([[5, 6, 7]])
+    with torch.no_grad():
+        expected = trained(input_ids).logits
+
+    torch.manual_seed(42)
+    fresh = LlamaForCausalLM(llama_config())
+    attached = attach_graft(fresh, result["artifact_path"])
+    attached.eval()
+    with torch.no_grad():
+        actual = attached(input_ids).logits
+
+    assert torch.equal(actual, expected)
