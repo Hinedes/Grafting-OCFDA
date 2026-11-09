@@ -70,6 +70,8 @@ EXPECTED_BENCHMARK_SHA256 = {
     "SVAMP": "ffed015784f738f317c5603177861d044c4fc94e09211d78b25e96d46c656e2c",
 }
 B1_ALLOWED_TREE_CHANGES = {
+    "CITATION.cff",
+    "LICENSE",
     "CONTRIBUTING.md",
     "README.md",
     "pyproject.toml",
