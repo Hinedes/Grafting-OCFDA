@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "grafting-ocfda"
 version = "0.1.0"
-description = "Activation-aware sparse and hybrid low-rank fine-tuning for LLMs"
+description = "Grafting adds a small trainable FFN path to a frozen language model"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 license = {file = "LICENSE"}

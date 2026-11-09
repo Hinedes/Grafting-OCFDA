@@ -1,116 +1,278 @@
-# Grafting / OCFDA
+# Grafting
 
-This repository contains the experimental implementation of **Grafting** using **Ownership-Constrained FFN Delta Adaptation (OCFDA)**.
+Grafting adds a small trainable path to a frozen language model. The host
+weights never change; the trained part is a separate set of tensors you can
+switch off, keep on disk, or replace.
 
-## Why Super-Tuning is here
+PyTorch, transformers, safetensors. Dense SwiGLU models with `gate_proj`,
+`up_proj`, and `down_proj` in each decoder layer.
 
-The training and evaluation pipeline comes from [Super-Tuning](https://github.com/vectozavr/SuperTuning), pinned from upstream commit `3e961f0bb7ca49417f3804d7a61b24af58fab21d`.
+## What it's for
 
-Super-Tuning already provides the Math17K pipeline, LoRA and sparse-tuning baselines, parameter-budget accounting, learning-rate (LR) selection, evaluation, and checkpoint handling. OCFDA uses the same pipeline so the comparisons do not depend on a separate benchmark implementation.
+A team runs Qwen2.5-0.5B behind an arithmetic helper. The model is fine for
+chat but unreliable on "what is 47 + 38?". Fine-tuning the whole model would
+change the weights they already validated and make every experiment a new
+model.
 
-We retain the upstream MIT license and third-party notices. Super-Tuning itself is not part of the claimed Grafting contribution.
+They train a Graft on a small set of arithmetic prompts. The host stays
+Qwen2.5-0.5B. When a request needs arithmetic, `attach_graft` turns the Graft
+on. When it doesn't, `detach_graft` turns it off and the model answers from the
+host alone.
 
-## What Grafting is
+The Grafts live in `~/grafts`. `grafting list` shows them, and `swap_graft`
+moves between two Grafts trained with the same support layout without
+reloading the host. An artifact trained for Qwen2.5-0.5B is refused on
+Llama-3.2-1B before it is attached. The error names the artifact model and
+both tensor counts.
 
-Grafting treats adaptation as separately owned state attached to an immutable host model.
+It won't merge the delta into the host weights, and it won't load onto a host
+whose tensors differ. An installed Graft changes the model's answers on every
+prompt, including prompts it wasn't trained for. Detaching removes that change
+exactly.
 
-$$
-W_{\mathrm{eff}} = W_0 + \Delta W
-$$
+## How a Graft sits in the model
 
-The host weights $W_0$ remain frozen. The optimizer writes only to Graft-owned parameters.
+A Graft lives on one set of intermediate coordinates per layer. `S` is a list
+of `k` indices. In aligned geometry the same `S` feeds gate, up, and down.
+`E_S` selects those rows from `gate_proj` and `up_proj`, and those columns from
+`down_proj`. The host matrices stay frozen.
 
-OCFDA applies this to SwiGLU FFNs. OCFDA treats the matching Gate row, Up row, and Down column as one intermediate coordinate:
+```
+                        x
+                        |
+          +-------------+-------------+
+          |                           |
+   gate_proj (frozen)          up_proj (frozen)
+          |                           |
+    +-----+-----+               +-----+-----+
+    |           |               |           |
+ host rows   Graft rows      host rows   Graft rows
+    |         E_S G               |         E_S U
+    |           |                 |           |
+    |        [cut]                |        [cut]
+    |           |                 |           |
+    +-----+-----+                 +-----+-----+
+          |                           |
+          +------------+--------------+
+                       |
+                    SwiGLU
+                       |
+                down_proj (frozen)
+                       |
+                +------+------+
+                |             |
+          host columns   Graft columns
+                         D E_S^T
+                          [cut]
+                |             |
+                +------+------+
+                       |
+                       y
+```
 
-$$
-\{W_{gate,i:},\ W_{up,i:},\ W_{down,:i}\}
-$$
+`detach_graft()` stops adding `E_S G`, `E_S U`, and `D E_S^T`. The frozen host
+branches stay connected, so the output is the plain host output.
 
-For a selected support $S$ (the set of trained coordinates):
+### What happens on attach
 
-$$
-\Delta W_g = E_S G,\qquad
-\Delta W_u = E_S U,\qquad
-\Delta W_d = D E_S^\top
-$$
+1. `attach_graft` reads `graft_manifest.json`. It needs `supports`, `k`, and
+   `geometry`; if any is missing, it stops.
+2. It checks host identity: the manifest's `base_model` against the host's
+   model ID, and the exact set of host tensor names. A mismatch stops with
+   the artifact model, the host model when known, and both tensor counts. The
+   host is left without this Graft, and no host weight is written.
+3. It casts an unwrapped host to the manifest's `dtype` if needed, then
+   computes SHA-256 for each host tensor and compares it with
+   `host_tensor_hashes`. A changed value stops with the tensor name. Wrappers
+   are not built.
+4. It builds the OCFDA wrappers from the recorded `supports` and `k`. It does
+   not draw a new support.
+5. `load_graft` checks the Graft tensor names, shapes, and support buffers,
+   then copies `graft.safetensors` into the wrappers. `attach_graft` enables
+   the Graft.
+6. The same model object comes back. `attach_graft` does not reload the host.
 
-The experiment compares two support modes with the same number of trainable values. In aligned mode, one support $S$ is drawn per layer and reused for Gate, Up, and Down. In independent mode, each projection draws its own support of the same size.
+A failure at any step returns before the new Graft is enabled. If the host was
+already wrapped, it keeps its current Graft.
 
-## Results
+## Guarantees
 
-All results below use Llama-3.2-1B, Math17K training, and 805 evaluation questions that do not appear in training. Macro accuracy is the unweighted mean of the six benchmark accuracies.
+Detached output is bitwise equal to the plain host. `detach_graft` only flips
+the wrapper gates; it does not copy or restore weights.
 
-### Strict ownership
+Training and attach leave every host weight unchanged. The optimizer only sees
+`graft_delta` parameters.
 
-With the host unchanged bit for bit and the optimizer restricted to Graft state, aligned OCFDA reached 46.34–55.57% macro accuracy across three new-seed runs. The frozen base scored 9.94%.
+A Graft trained for a different host is refused before it is attached, and the
+host is left without that Graft.
 
-The 1B configuration uses 5,603,328 trainable Graft values.
+A failed `swap_graft` leaves the active Graft, its tensors, and its enabled
+state unchanged.
 
-### Aligned vs independent support
+Attaching a Graft reproduces the outputs of the model that trained it,
+bitwise.
 
-| Pair | Aligned | Independent | Δ |
-|---|---:|---:|---:|
-| 1001 / 2001 | 46.34 | 37.53 | +8.81 |
-| 1002 / 2002 | 54.40 | 52.96 | +1.44 |
-| 1003 / 2003 | 55.57 | 53.35 | +2.22 |
+These are checked in `tests/test_graft_manage.py`
+(`test_detach_graft_matches_unwrapped_host`,
+`test_attach_graft_reproduces_trained_outputs`,
+`test_enable_graft_restores_grafted_outputs`,
+`test_swap_graft_refuses_other_host_and_preserves_state`,
+`test_swap_graft_matches_fresh_attach`, `test_cross_host_refusal_names_models_and_counts`),
+`tests/test_ocfda.py`
+(`test_pretrained_tensors_are_bit_identical_after_an_adamw_step`,
+`test_graft_parameters_learn_and_detach_restores_the_host`,
+`test_zero_graft_is_bit_exact_noop_and_host_stays_frozen`), and
+`tests/test_graft_artifact.py`
+(`test_load_refuses_modified_host_tensor_and_names_it`).
 
-Mean aligned advantage:
+## Run it
 
-$$
-+4.16\text{ percentage points}
-$$
+Python 3.10 or newer and the dependencies in `pyproject.toml`. The commands
+below ran on CPU with a pre-populated `HF_HOME`; `--local-files-only` and
+`grafting verify` use that cache.
 
-Aligned won all three matched pairs.
-
-### Competitive gate
-
-Learning rates were selected by held-out Math17K validation NLL (negative log-likelihood) before final evaluation.
-
-| Method | Three-seed mean macro accuracy |
-|---|---:|
-| **OCFDA aligned** | **52.10** |
-| Super-BottomK | 47.95 |
-| LoRA | 45.69 |
-
-Under this protocol, OCFDA finished +4.15 pp above Super-BottomK and +6.42 pp above LoRA.
-
-The evidence is limited to one model/task setting with three final replicates per method. Seed variance is large, so these results do not establish general superiority over LoRA or Super-Tuning.
-
-## Next
-
-The next block repeats the comparison on Llama-3.2-3B while keeping the task and evaluation protocol fixed.
-
-## Installation
-
-The B1 target uses Python 3.10 or 3.11, PyTorch 2.5/2.6, and an AMD MI300X with a ROCm/HIP PyTorch build. Legacy RoSA additionally requires Linux/CUDA because it uses bitsandbytes.
-
-```bash
+```sh
 git clone https://github.com/Hinedes/Grafting-OCFDA.git
 cd Grafting-OCFDA
-
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e ".[tracking,analysis]"
+python -m pip install -e .
 ```
 
-Request access to the gated Meta Llama checkpoints and authenticate with Hugging Face before running the examples. C4 calibration is downloaded through `datasets`; set `HF_HOME` and `HF_DATASETS_CACHE` when cluster storage requires a specific cache location.
+Write a small arithmetic set. Any JSON list with `instruction` and `output`
+works; this one has 400 rows and the run uses the first 64.
 
-Install the optional `[rosa]` extra only for the legacy Linux/CUDA RoSA path.
+```sh
+python - <<'PY'
+import json
+import os
 
-For development:
-
-```bash
-python -m pip install -e ".[dev,rosa,tracking,analysis]"
-pytest
+rows = [
+    {"instruction": f"What is {a} + {b}?", "input": "", "output": str(a + b)}
+    for a in range(20)
+    for b in range(20)
+]
+path = os.path.expanduser("~/grafts/arithmetic.json")
+os.makedirs(os.path.dirname(path), exist_ok=True)
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(rows, handle)
+PY
 ```
 
-## B1 OCFDA experiment
+Train two Grafts with the same support and `k`, so one can replace the other.
+Ten steps is a smoke run, not a useful arithmetic model.
 
-The frozen B1 handoff is executable through `grafting-b1`. It materializes the instruction-disjoint Math17K benchmark subsets, hashes the pinned artifacts, runs the two-step smoke run, gates on the clean Base/LoRA sentinel, selects one shared OCFDA learning rate from the reserved pilot, and then runs the sanity pair and 18 confirmatory runs:
-
-```bash
-grafting-b1 --output_dir runs/b1
+```sh
+COMMON="--model Qwen/Qwen2.5-0.5B --revision 060db6499f32faf8b98477b0a26969ef7d8b9987 --train-data $HOME/grafts/arithmetic.json --k 8 --geometry aligned --support-seed 1001 --steps 10 --batch-size 2 --max-examples 64 --max-length 64 --loss-on response --dtype fp32 --device cpu --local-files-only"
+grafting train $COMMON --output-dir ~/grafts/arithmetic-a --seed 2001
+grafting train $COMMON --output-dir ~/grafts/arithmetic-b --seed 2002
 ```
 
-The B1 runner requires the pinned Super-Tuning commit as an ancestor, rejects changes outside the allowlisted B1 patch, and records hashes for the active source tree and model snapshot. It invokes `ocfda-aligned` and `ocfda-independent` through `supertuning-math`, fixing Llama-3.2-1B, `k=57`, Gate/Up/Down-only FP32 deltas, AdamW with zero weight decay, and the clean held-out suite.
+```sh
+grafting list ~/grafts
+grafting inspect ~/grafts/arithmetic-a
+grafting verify ~/grafts/arithmetic-a --model Qwen/Qwen2.5-0.5B
+```
+
+The Python API uses the same artifacts. The asserts check that detach and swap
+change the logits while enable restores the first Graft.
+
+```python
+import torch
+from pathlib import Path
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from grafting import attach_graft, detach_graft, enable_graft, swap_graft
+
+model_id = "Qwen/Qwen2.5-0.5B"
+revision = "060db6499f32faf8b98477b0a26969ef7d8b9987"
+grafts = Path.home() / "grafts"
+
+tokenizer = AutoTokenizer.from_pretrained(
+    model_id, revision=revision, local_files_only=True
+)
+model = AutoModelForCausalLM.from_pretrained(
+    model_id, revision=revision, torch_dtype=torch.float32, local_files_only=True
+)
+model.eval()
+
+prompt = "### Instruction:\nWhat is 17 + 25?\n\n### Response:\n"
+inputs = tokenizer(prompt, return_tensors="pt")
+
+def logits():
+    with torch.no_grad():
+        return model(**inputs).logits
+
+attach_graft(model, str(grafts / "arithmetic-a"))
+attached = logits()
+
+detach_graft(model)
+detached = logits()
+
+enable_graft(model)
+enabled = logits()
+
+swap_graft(model, str(grafts / "arithmetic-b"))
+swapped = logits()
+
+assert torch.equal(attached, enabled)
+assert not torch.equal(attached, detached)
+assert not torch.equal(attached, swapped)
+print("attach/enable match; detach and swap change the output")
+```
+
+## The artifact
+
+`grafting train` writes a directory with two files. `graft.safetensors` holds
+only `graft_delta` and `graft_support` tensors. `graft_manifest.json` holds
+`format_version`, `base_model`, `base_model_revision`, `host_tensor_hashes`,
+`supports`, `k`, `geometry`, `seed`, `training_seed`, `dtype`, `provenance`,
+and `extra_metadata`. `extra_metadata.training` records the steps, losses,
+learning rate, and `loss_on`.
+
+Host identity is the pair (`base_model`, exact host tensor names) plus the
+SHA-256 of each host tensor. `host_tensor_hashes` is checked in the manifest's
+`dtype`. `base_model_revision` is what `grafting verify` loads when `--model`
+is the artifact's recorded model ID; it calls `snapshot_download(revision=...,
+local_files_only=True)` instead of following `refs/main`. `attach_graft`
+itself does not download anything.
+
+Version 1 artifacts from the B1 pipeline still load: `model.safetensors` (or
+`pytorch_model.bin`) plus `supertuning_config.json`.
+`test_load_accepts_format_version_1_checkpoint` checks the v1 path.
+
+## Which models work
+
+A dense causal LM with SwiGLU and `gate_proj`, `up_proj`, and `down_proj` in
+each decoder layer, under `model.layers` or `model.decoder.layers`. Tested on
+Llama-3.2-1B and Qwen2.5-0.5B. MoE layers and GeGLU models are not supported.
+
+## Limits
+
+`swap_graft` needs the same `k` and support layout as the active Graft. Two
+artifacts trained with the same `--support-seed` and `--k` qualify. A
+different layout is refused and the active Graft stays as it was; load the
+other artifact with `attach_graft` on a fresh host instead.
+
+An installed Graft affects every prompt. On Llama-3.2-1B, aligned OCFDA, the
+macro score over PIQA, HellaSwag, and ARC-Easy fell 3.54 pp against the frozen
+base (3 seeds, `b1-evidence-v1`). `detach_graft` returns the host output
+exactly, so that change goes away with it.
+
+Loading the original B1 manifests with `strict_b1=True` depends on
+machine-specific paths recorded in those manifests. The standalone v2 path
+does not.
+
+## Research results
+
+Math17K, Llama-3.2-1B, 3 seeds, 805 held-out questions. Aligned OCFDA reached
+52.10% canonical macro accuracy, the unweighted mean of six benchmark
+accuracies; the frozen base scored 9.94%. Aligned support beat independent
+support by 4.16 pp on average, in 3 of 3 matched pairs. This is one model/task
+setting. It does not establish superiority over LoRA or any other method. The
+results are tagged `b1-evidence-v1` in this repository; the full run record is
+kept separately.
+
+## Credits and license
+
+The training pipeline and Math17K benchmark come from
+[Super-Tuning](https://github.com/vectozavr/SuperTuning), pinned at commit
+`3e961f0bb7ca49417f3804d7a61b24af58fab21d`. Its MIT notice is kept in
+`LICENSE`. Grafting and OCFDA are by Amantur Saliev (Hinedes). MIT.
