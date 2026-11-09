@@ -12,10 +12,10 @@ import torch
 from transformers import AutoModelForCausalLM
 
 try:
-    from .graft_artifact import read_graft_manifest
+    from .graft_artifact import manifest_torch_dtype, read_graft_manifest
     from .graft_manage import attach_graft, list_grafts
 except ImportError:
-    from graft_artifact import read_graft_manifest
+    from graft_artifact import manifest_torch_dtype, read_graft_manifest
     from graft_manage import attach_graft, list_grafts
 
 
@@ -30,6 +30,7 @@ def _summary(path: str, manifest: Mapping[str, Any]) -> dict[str, Any]:
         "geometry": manifest.get("geometry"),
         "seed": manifest.get("seed"),
         "training_seed": manifest.get("training_seed"),
+        "dtype": manifest.get("dtype"),
         "provenance": manifest.get("provenance") or {},
         "support_layers": len(supports),
         "host_tensors": len(manifest.get("host_tensor_hashes") or {}),
@@ -49,7 +50,13 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
 
 
 def _cmd_verify(args: argparse.Namespace) -> int:
-    model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=torch.float32)
+    manifest = read_graft_manifest(args.artifact)
+    dtype = manifest_torch_dtype(manifest) or torch.float32
+    kwargs = {"torch_dtype": dtype, "local_files_only": True}
+    revision = manifest.get("base_model_revision")
+    if revision and not os.path.isdir(args.model):
+        kwargs["revision"] = revision
+    model = AutoModelForCausalLM.from_pretrained(args.model, **kwargs)
     model.eval()
     try:
         attach_graft(model, args.artifact)

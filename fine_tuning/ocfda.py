@@ -187,30 +187,49 @@ def _normalise_supports(
 def get_ocfda_model(
     model: nn.Module,
     geometry: str = "aligned",
-    support_seed: int = 0,
+    support_seed: Optional[int] = 0,
     k: int = OCFDA_DEFAULT_K,
     supports: Optional[Mapping[str, Mapping[str, Iterable[int]]]] = None,
+    verify_supports_against_seed: bool = True,
 ) -> nn.Module:
-    """Attach OCFDA to every Llama MLP Gate/Up/Down projection."""
+    """Attach OCFDA to every Llama MLP Gate/Up/Down projection.
+
+    ``supports`` may be explicit.  When ``verify_supports_against_seed`` is
+    true (the B1/strict path), the explicit supports must equal the seeded
+    draw; when false, the seed is not needed to build the wrapper structure.
+    """
 
     if geometry not in OCFDA_GEOMETRIES:
         raise ValueError(f"geometry must be one of {OCFDA_GEOMETRIES}, got {geometry!r}")
     if k <= 0:
         raise ValueError("k must be positive")
     layers = _llama_layers(model)
-    generated_supports = generate_supports(
-        intermediate_size=int(model.config.intermediate_size),
-        num_layers=len(layers),
-        k=k,
-        geometry=geometry,
-        support_seed=support_seed,
-    )
+    generated_supports = None
     if supports is None:
+        if support_seed is None:
+            raise ValueError("support_seed is required when explicit supports are not provided")
+        generated_supports = generate_supports(
+            intermediate_size=int(model.config.intermediate_size),
+            num_layers=len(layers),
+            k=k,
+            geometry=geometry,
+            support_seed=support_seed,
+        )
         supports = generated_supports
     else:
         supports = _normalise_supports(supports, len(layers), k)
-        if supports != generated_supports:
-            raise ValueError("Provided OCFDA supports do not match the deterministic support seed")
+        if verify_supports_against_seed:
+            if support_seed is None:
+                raise ValueError("support_seed is required to verify explicit supports")
+            generated_supports = generate_supports(
+                intermediate_size=int(model.config.intermediate_size),
+                num_layers=len(layers),
+                k=k,
+                geometry=geometry,
+                support_seed=support_seed,
+            )
+            if supports != generated_supports:
+                raise ValueError("Provided OCFDA supports do not match the deterministic support seed")
     if geometry == "aligned":
         for layer, layer_supports in supports.items():
             if len({tuple(layer_supports[projection]) for projection in OCFDA_PROJECTIONS}) != 1:
@@ -233,7 +252,7 @@ def get_ocfda_model(
             wrappers.append(wrapper)
 
     model.ocfda_geometry = geometry
-    model.ocfda_support_seed = int(support_seed)
+    model.ocfda_support_seed = int(support_seed) if support_seed is not None else None
     model.ocfda_k = int(k)
     model.ocfda_supports = supports
     model.ocfda_wrappers = tuple(wrappers)

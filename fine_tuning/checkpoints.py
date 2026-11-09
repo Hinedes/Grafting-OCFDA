@@ -275,6 +275,7 @@ def load_checkpoint(
                 support_seed=int(metadata["support_seed"]),
                 k=int(metadata["ocfda_k"]),
                 supports=metadata.get("ocfda_supports"),
+                verify_supports_against_seed=metadata.get("protocol") == B1_PROTOCOL,
             )
             if metadata.get("ocfda_trainable_scalars") != model.optimizer_trainable_params:
                 raise RuntimeError("Checkpoint OCFDA budget does not match the reconstructed adapter")

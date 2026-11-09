@@ -101,6 +101,22 @@ def _strict_b1_constants() -> tuple[str, str, int, set[int], set[int]]:
     return B1_MODEL_ID, B1_MODEL_REVISION, B1_OCFDA_K, B1_OCFDA_SUPPORT_SEEDS, B1_OCFDA_TRAINING_SEEDS
 
 
+def manifest_torch_dtype(manifest: Mapping[str, Any]) -> Optional[torch.dtype]:
+    """Return the host dtype recorded by an artifact, defaulting v1 to B1's bf16."""
+
+    name = manifest.get("dtype")
+    if name:
+        name = str(name).replace("torch.", "")
+        dtype = getattr(torch, name, None)
+        if not isinstance(dtype, torch.dtype):
+            raise ValueError(f"Unsupported Graft dtype: {manifest.get('dtype')!r}")
+        return dtype
+    if manifest.get("format_version") == 1:
+        extra = manifest.get("extra_metadata") or {}
+        return torch.bfloat16 if extra.get("bf16", True) else torch.float16
+    return None
+
+
 def _check_strict_b1(manifest: Mapping[str, Any]) -> None:
     model_id, revision, k, support_seeds, training_seeds = _strict_b1_constants()
     if manifest.get("base_model") != model_id:
@@ -183,6 +199,7 @@ def read_graft_manifest(path: str) -> dict[str, Any]:
         "geometry": metadata.get("geometry"),
         "seed": metadata.get("support_seed"),
         "training_seed": metadata.get("training_seed"),
+        "dtype": "bfloat16" if metadata.get("bf16", True) else "float16",
         "provenance": {"protocol": metadata["protocol"]} if metadata.get("protocol") else {},
         "extra_metadata": metadata,
     }
@@ -262,6 +279,7 @@ def save_graft(
     seed = getattr(model, "ocfda_support_seed", None)
     if seed is None:
         seed = extra.get("support_seed", extra.get("seed"))
+    host_dtype = next(model.parameters()).dtype
     host_hashes = host_tensor_hashes(model, exclude=GRAFT_MARKERS)
 
     os.makedirs(path, exist_ok=True)
@@ -311,6 +329,7 @@ def save_graft(
         "geometry": geometry,
         "seed": seed,
         "training_seed": extra.get("training_seed"),
+        "dtype": str(host_dtype).replace("torch.", ""),
         "provenance": extra.get("provenance")
         or ({"protocol": extra["protocol"]} if extra.get("protocol") else {}),
         "extra_metadata": extra or None,

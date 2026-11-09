@@ -273,6 +273,32 @@ def test_generate_runs_enabled_and_detached(tmp_path) -> None:
     assert detached.shape[0] == 1 and detached.shape[1] >= input_ids.shape[1]
 
 
+def test_attach_graft_uses_explicit_non_seeded_supports(tmp_path) -> None:
+    supports = {
+        "0": {"gate_proj": [0, 1], "up_proj": [1, 2], "down_proj": [2, 3]},
+        "1": {"gate_proj": [3, 4], "up_proj": [4, 5], "down_proj": [0, 2]},
+    }
+    torch.manual_seed(3)
+    trained = get_ocfda_model(
+        TinyModel(),
+        geometry="independent",
+        support_seed=None,
+        k=2,
+        supports=supports,
+        verify_supports_against_seed=False,
+    )
+    set_deltas(trained, seed=11)
+    save_graft(trained, str(tmp_path / "graft"), extra_metadata=meta())
+
+    probe = torch.randn(4, 4)
+    expected = logits(trained, probe).detach().clone()
+
+    host = base_model()
+    attached = attach_graft(host, str(tmp_path / "graft"))
+
+    assert torch.equal(logits(attached, probe), expected)
+
+
 def test_cli_list_inspect_and_verify(tmp_path) -> None:
     model = tiny_llama()
     model_dir = tmp_path / "host"

@@ -14,10 +14,22 @@ from typing import Any, Optional
 import torch
 
 try:
-    from .graft_artifact import load_graft, read_graft_manifest, verify_graft, verify_host
+    from .graft_artifact import (
+        load_graft,
+        manifest_torch_dtype,
+        read_graft_manifest,
+        verify_graft,
+        verify_host,
+    )
     from .ocfda import get_ocfda_model, get_ocfda_model_state_dict, set_graft_enabled
 except ImportError:
-    from graft_artifact import load_graft, read_graft_manifest, verify_graft, verify_host
+    from graft_artifact import (
+        load_graft,
+        manifest_torch_dtype,
+        read_graft_manifest,
+        verify_graft,
+        verify_host,
+    )
     from ocfda import get_ocfda_model, get_ocfda_model_state_dict, set_graft_enabled
 
 
@@ -52,17 +64,24 @@ def attach_graft(host_model: torch.nn.Module, artifact_path: str) -> torch.nn.Mo
     k = manifest.get("k")
     geometry = manifest.get("geometry")
     seed = manifest.get("seed")
-    if not supports or k is None or geometry is None or seed is None:
-        raise RuntimeError(f"Graft artifact {artifact_path} is missing supports/k/geometry/seed")
+    if not supports or k is None or geometry is None:
+        raise RuntimeError(f"Graft artifact {artifact_path} is missing supports/k/geometry")
+
+    target_dtype = manifest_torch_dtype(manifest)
+    if not _is_wrapped(host_model) and target_dtype is not None:
+        current_dtype = next(host_model.parameters()).dtype
+        if current_dtype != target_dtype:
+            host_model.to(dtype=target_dtype)
 
     verify_host(host_model, manifest, artifact_path)
     if not _is_wrapped(host_model):
         get_ocfda_model(
             host_model,
             geometry=str(geometry),
-            support_seed=int(seed),
+            support_seed=None if seed is None else int(seed),
             k=int(k),
             supports=supports,
+            verify_supports_against_seed=False,
         )
     load_graft(host_model, artifact_path)
     set_graft_enabled(host_model, True)
